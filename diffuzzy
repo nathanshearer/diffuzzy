@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+
+NAME="diffuzzy"
+CODENAME="diffuzzy"
+COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
+LICENSE="GNU General Public License 2.0"
+VERSION="0.0.0.0"
+
+function diffuzzy_compare
+{
+	FILE1="$1"
+	FILE1_SIZE=$(stat -c %s "$FILE1")
+
+	FILE2="$2"
+	FILE2_SIZE=$(stat -c %s "$FILE2")
+
+	# if only one is a file
+	if [ -f "$FILE1" -a ! -f "$FILE2" ]; then
+		echo "Only one of the arguments is a readable file"
+		return 1
+	fi
+	if [ ! -f "$FILE1" -a -f "$FILE2" ]; then
+		echo "Only one of the arguments is a readable file"
+		return 1
+	fi
+
+	# recurse if both are directories
+	if [ -d "$FILE1" -a -d "$FILE2" ]; then
+		echo "Comparing two directory trees..."
+		{ cd "$FILE1"; find ! -type d -print0; cd "$FILE2"; find ! -type d -print0; } | sort -z | uniq -z | \
+			while read -r -d $'\0' FILE; do
+				echo "$FILE"
+				"$THIS" "$FILE1/$FILE" "$FILE2/$FILE"
+				COMPARE_RESULT=$?
+				if [ $COMPARE_RESULT -ne 0 ]; then
+					return $COMPARE_RESULT
+				fi
+			done
+		echo "Both directory trees are the same"
+		return 0
+	fi
+
+	# if both files are different sizes
+	if [ "$FILE1_SIZE" != "$FILE2_SIZE" ]; then
+		echo "Both files are different sizes"
+		return 1
+	fi
+
+	# full comparison if both files are small
+	if [ $(echo "$FILE1_SIZE<=1024" | bc) -eq 1 ]; then
+		diff -q "$FILE1" "$FILE2" >/dev/null
+		return $?
+	fi
+
+	# compare the first 512 bytes
+	FILE1_DATA=$(dd status=none if="$FILE1" bs=1 count=512 | base64 -w 0)
+	FILE2_DATA=$(dd status=none if="$FILE2" bs=1 count=512 | base64 -w 0)
+	if [ "$FILE1_DATA" != "$FILE2_DATA" ]; then
+		echo "The first 512 bytes differ"
+		return 1
+	fi
+
+	# compare the last 512 bytes
+	FILE1_DATA=$(dd status=none if="$FILE1" bs=1 count=512 skip=$(($FILE1_SIZE-512)) | base64 -w 0)
+	FILE2_DATA=$(dd status=none if="$FILE2" bs=1 count=512 skip=$(($FILE2_SIZE-512)) | base64 -w 0)
+	if [ "$FILE1_DATA" != "$FILE2_DATA" ]; then
+		echo "The last 512 bytes differ"
+		return 1
+	fi
+
+	# perform floor(log(2,file_size)) random offset comparisons
+	ITERATOR=1
+	SECTORS=$(($FILE1_SIZE/512))
+	while [ $ITERATOR -lt $FILE1_SIZE ]; do
+		OFFSET=$(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS ))
+		
+		FILE1_DATA=$(dd status=none if="$FILE1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+		FILE2_DATA=$(dd status=none if="$FILE2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+		
+		if [ "$FILE1_DATA" != "$FILE2_DATA" ]; then
+			echo "The two files differ"
+			return 1
+		fi
+		
+		ITERATOR=$(($ITERATOR*2))
+	done
+	return 0
+}
+
+#------------------------------------------------------------------------------
+# command line arguments
+
+THIS="$0"
+if [ $# -ne 2 ]; then
+	echo "usage: diffuzzy file1 file2"
+	exit 1
+fi
+
+#------------------------------------------------------------------------------
+# begin execution
+
+diffuzzy_compare "$1" "$2"
+exit $?
