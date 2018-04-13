@@ -6,31 +6,34 @@ COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
 VERSION="0.0.0.0"
 
+# \brief Compare two paths recursively with a probabilistic diff
+# \param $1 The first path to compare
+# \param $2 The second path to compare
 function diffuzzy_compare
 {
-	FILE1="$1"
-	FILE1_SIZE=$(stat -c %s "$FILE1")
+	PATH1=$(readlink -f "$1")
+	PATH1_SIZE=$(stat -c %s "$PATH1")
 
-	FILE2="$2"
-	FILE2_SIZE=$(stat -c %s "$FILE2")
+	PATH2=$(readlink -f "$2")
+	PATH2_SIZE=$(stat -c %s "$PATH2")
 
 	# if only one is a file
-	if [ -f "$FILE1" -a ! -f "$FILE2" ]; then
+	if [ -f "$PATH1" -a ! -f "$PATH2" ]; then
 		echo "Only one of the arguments is a readable file"
 		return 1
 	fi
-	if [ ! -f "$FILE1" -a -f "$FILE2" ]; then
+	if [ ! -f "$PATH1" -a -f "$PATH2" ]; then
 		echo "Only one of the arguments is a readable file"
 		return 1
 	fi
 
 	# recurse if both are directories
-	if [ -d "$FILE1" -a -d "$FILE2" ]; then
+	if [ -d "$PATH1" -a -d "$PATH2" ]; then
 		echo "Comparing two directory trees..."
-		{ cd "$FILE1"; find ! -type d -print0; cd "$FILE2"; find ! -type d -print0; } | sort -z | uniq -z | \
+		{ cd "$PATH1"; find ! -type d -print0; cd "$PATH2"; find ! -type d -print0; } | sort -z | uniq -z | \
 			while read -r -d $'\0' FILE; do
 				echo "$FILE"
-				"$THIS" "$FILE1/$FILE" "$FILE2/$FILE"
+				"$THIS" "$PATH1/$FILE" "$PATH2/$FILE"
 				COMPARE_RESULT=$?
 				if [ $COMPARE_RESULT -ne 0 ]; then
 					return $COMPARE_RESULT
@@ -41,43 +44,43 @@ function diffuzzy_compare
 	fi
 
 	# if both files are different sizes
-	if [ "$FILE1_SIZE" != "$FILE2_SIZE" ]; then
+	if [ "$PATH1_SIZE" != "$PATH2_SIZE" ]; then
 		echo "Both files are different sizes"
 		return 1
 	fi
 
 	# full comparison if both files are small
-	if [ $(echo "$FILE1_SIZE<=1024" | bc) -eq 1 ]; then
-		diff -q "$FILE1" "$FILE2" >/dev/null
+	if [ $(echo "$PATH1_SIZE<=1024" | bc) -eq 1 ]; then
+		diff -q "$PATH1" "$PATH2" >/dev/null
 		return $?
 	fi
 
 	# compare the first 512 bytes
-	FILE1_DATA=$(dd status=none if="$FILE1" bs=1 count=512 | base64 -w 0)
-	FILE2_DATA=$(dd status=none if="$FILE2" bs=1 count=512 | base64 -w 0)
-	if [ "$FILE1_DATA" != "$FILE2_DATA" ]; then
+	PATH1_DATA=$(dd status=none if="$PATH1" bs=1 count=512 | base64 -w 0)
+	PATH2_DATA=$(dd status=none if="$PATH2" bs=1 count=512 | base64 -w 0)
+	if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
 		echo "The first 512 bytes differ"
 		return 1
 	fi
 
 	# compare the last 512 bytes
-	FILE1_DATA=$(dd status=none if="$FILE1" bs=1 count=512 skip=$(($FILE1_SIZE-512)) | base64 -w 0)
-	FILE2_DATA=$(dd status=none if="$FILE2" bs=1 count=512 skip=$(($FILE2_SIZE-512)) | base64 -w 0)
-	if [ "$FILE1_DATA" != "$FILE2_DATA" ]; then
+	PATH1_DATA=$(dd status=none if="$PATH1" bs=1 count=512 skip=$(($PATH1_SIZE-512)) | base64 -w 0)
+	PATH2_DATA=$(dd status=none if="$PATH2" bs=1 count=512 skip=$(($PATH2_SIZE-512)) | base64 -w 0)
+	if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
 		echo "The last 512 bytes differ"
 		return 1
 	fi
 
 	# perform floor(log(2,file_size)) random offset comparisons
 	ITERATOR=1
-	SECTORS=$(($FILE1_SIZE/512))
-	while [ $ITERATOR -lt $FILE1_SIZE ]; do
+	SECTORS=$(($PATH1_SIZE/512))
+	while [ $ITERATOR -lt $PATH1_SIZE ]; do
 		OFFSET=$(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS ))
 		
-		FILE1_DATA=$(dd status=none if="$FILE1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
-		FILE2_DATA=$(dd status=none if="$FILE2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+		PATH1_DATA=$(dd status=none if="$PATH1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+		PATH2_DATA=$(dd status=none if="$PATH2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
 		
-		if [ "$FILE1_DATA" != "$FILE2_DATA" ]; then
+		if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
 			echo "The two files differ"
 			return 1
 		fi
@@ -87,14 +90,136 @@ function diffuzzy_compare
 	return 0
 }
 
+# \brief Displays the help and exits the program
+function diffuzzy_help
+{
+	#     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+	echo "Description:"
+	echo "  Compare two paths recursively with a probabilistic diff"
+	echo
+	echo "Usage:"
+	echo "  $CODENAME [options] path1 path2"
+	echo
+	echo "Options:"
+	echo "  -h, --help"
+	echo "    Display this help message and exit."
+	echo "  --unittest"
+	echo "    Perform unit tests to verify functionality of this script."
+	echo
+	echo "Version:"
+	echo "  $NAME $VERSION"
+	echo "  $COPYRIGHT"
+	echo "  Licensed under $LICENSE"
+	exit
+}
+
+# \brief Perform unit tests to verify functionality of this script
+function diffuzzy_unittest
+{
+	local TMP="/tmp/diffuzzy.$$"
+	mkdir "$TMP"
+	
+	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/1.random"
+	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/2.random"
+	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/3.random"
+	
+	echo "Compare two files with different sizes..."
+	dd status=none if=/dev/urandom bs=1MiB count=4 of="$TMP/01.bin"
+	dd status=none if=/dev/urandom bs=1MiB count=6 of="$TMP/02.bin"
+	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	
+	echo "Compare two small files..."
+	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/01.bin"
+	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/02.bin"
+	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	cp "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -ne 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	
+	echo "Compare two files with a different header..."
+	dd status=none if=/dev/urandom bs=512 count=1 of="$TMP/01.bin"
+	cat "$TMP/1.random" >> "$TMP/01.bin"
+	dd status=none if=/dev/urandom bs=512 count=1 of="$TMP/02.bin"
+	cat "$TMP/1.random" >> "$TMP/02.bin"
+	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	
+	echo "Compare two files with a different footer..."
+	cp "$TMP/1.random" "$TMP/01.bin"
+	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/01.bin"
+	cp "$TMP/1.random" "$TMP/02.bin"
+	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/02.bin"
+	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	
+	echo "Simulate a preallocated failed transfer..."
+	cat "$TMP/1.random" > "$TMP/01.bin"
+	cat "$TMP/2.random" >> "$TMP/01.bin"
+	cat "$TMP/3.random" >> "$TMP/01.bin"
+	cat "$TMP/1.random" > "$TMP/02.bin"
+	truncate -s 30MiB "$TMP/02.bin"
+	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	
+	echo "Simulate bitrot"
+	dd status=none if=/dev/urandom bs=1MiB count=100 >> "$TMP/01.bin"
+	cp "$TMP/01.bin" "$TMP/02.bin"
+	for ITERATOR in $(seq 1 10000); do
+		dd status=none if=/dev/urandom bs=512 count=1 seek=$(($RANDOM*$RANDOM%204800)) conv=notrunc of="$TMP/02.bin"
+	done
+	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	
+	rm -rf "$TMP"
+}
+
 #------------------------------------------------------------------------------
 # command line arguments
 
 THIS="$0"
-if [ $# -ne 2 ]; then
-	echo "usage: diffuzzy file1 file2"
+if [ $# -eq 1 -a "$1" = "--unittest" ]; then
+	diffuzzy_unittest
+	exit $?
+fi
+if [ $# -lt 2 ]; then
+	diffuzzy_help
 	exit 1
 fi
+while [ $# -ne 2 ]; do
+	case "$1" in
+		"-h"|"--help")
+			diffuzzy_help
+			exit 1
+			;;
+		*)
+			diffuzzy_help
+			exit 1
+			;;
+	esac
+done
 
 #------------------------------------------------------------------------------
 # begin execution
