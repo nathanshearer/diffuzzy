@@ -11,55 +11,82 @@ VERSION="0.0.0.0"
 # \param $2 The second path to compare
 function diffuzzy_compare
 {
-	PATH1=$(readlink -f "$1")
-	PATH1_SIZE=$(stat -c %s "$PATH1")
-
-	PATH2=$(readlink -f "$2")
-	PATH2_SIZE=$(stat -c %s "$PATH2")
-
+	if [ ! -e "$1" ]; then
+		echo "Path \"$1\" does not exist."
+		return 1
+	fi
+	if [ ! -e "$2" ]; then
+		echo "Path \"$2\" does not exist."
+		return 1
+	fi
+	local PATH1=$(readlink -f "$1")
+	local PATH2=$(readlink -f "$2")
+	
 	# if only one is a file
 	if [ -f "$PATH1" -a ! -f "$PATH2" ]; then
-		echo "Only one of the arguments is a readable file"
+		echo "File type mismatch between \"$PATH1\" and \"$PATH2\"."
 		return 1
 	fi
 	if [ ! -f "$PATH1" -a -f "$PATH2" ]; then
-		echo "Only one of the arguments is a readable file"
+		echo "File type mismatch between \"$PATH1\" and \"$PATH2\"."
 		return 1
 	fi
-
-	# recurse if both are directories
+	
+	# if both are directories
 	if [ -d "$PATH1" -a -d "$PATH2" ]; then
-		echo "Comparing two directory trees..."
-		{ cd "$PATH1"; find ! -type d -print0; cd "$PATH2"; find ! -type d -print0; } | sort -z | uniq -z | \
+		#echo "Comparing two directory trees..."
+		{
+			cd "$PATH1"
+			find ! -type d -print0
+			cd "$PATH2"
+			find ! -type d -print0
+		} | \
+		sort -z | uniq -z | \
+		{
+			local STATUS=0
 			while read -r -d $'\0' FILE; do
-				echo "$FILE"
-				"$THIS" "$PATH1/$FILE" "$PATH2/$FILE"
-				COMPARE_RESULT=$?
-				if [ $COMPARE_RESULT -ne 0 ]; then
-					return $COMPARE_RESULT
+				# strip the leading ./ that find prepends to each string
+				FILE=$(echo -n "$FILE" | sed -r 's/^\.\///')
+				#echo "$FILE"
+				diffuzzy_compare "$PATH1/$FILE" "$PATH2/$FILE"
+				if [ $? -ne 0 ]; then
+					STATUS=1
 				fi
 			done
-		echo "Both directory trees are the same"
+			return $STATUS
+		}
+		if [ $? -ne 0 ]; then
+			return 1
+		fi
+		#echo "Both directory trees are the same"
 		return 0
 	fi
 
+	PATH1_SIZE=$(stat -c %s "$PATH1")
+	PATH2_SIZE=$(stat -c %s "$PATH2")
+
 	# if both files are different sizes
 	if [ "$PATH1_SIZE" != "$PATH2_SIZE" ]; then
-		echo "Both files are different sizes"
+		echo "File size mismatch between \"$PATH1\" and \"$PATH2\"."
 		return 1
 	fi
 
 	# full comparison if both files are small
 	if [ $(echo "$PATH1_SIZE<=1024" | bc) -eq 1 ]; then
 		diff -q "$PATH1" "$PATH2" >/dev/null
-		return $?
+		if [ $? -ne 0 ]; then
+			echo "File data differs between \"$PATH1\" and \"$PATH2\"."
+			return 1
+		else
+			return 0
+		fi
 	fi
 
 	# compare the first 512 bytes
 	PATH1_DATA=$(dd status=none if="$PATH1" bs=1 count=512 | base64 -w 0)
 	PATH2_DATA=$(dd status=none if="$PATH2" bs=1 count=512 | base64 -w 0)
 	if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
-		echo "The first 512 bytes differ"
+		echo "The first 512 bytes differ between \"$PATH1\" and \"$PATH2\"."
 		return 1
 	fi
 
@@ -67,7 +94,7 @@ function diffuzzy_compare
 	PATH1_DATA=$(dd status=none if="$PATH1" bs=1 count=512 skip=$(($PATH1_SIZE-512)) | base64 -w 0)
 	PATH2_DATA=$(dd status=none if="$PATH2" bs=1 count=512 skip=$(($PATH2_SIZE-512)) | base64 -w 0)
 	if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
-		echo "The last 512 bytes differ"
+		echo "The last 512 bytes differ between \"$PATH1\" and \"$PATH2\"."
 		return 1
 	fi
 
@@ -81,7 +108,7 @@ function diffuzzy_compare
 		PATH2_DATA=$(dd status=none if="$PATH2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
 		
 		if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
-			echo "The two files differ"
+			echo "File data differs between \"$PATH1\" and \"$PATH2\"."
 			return 1
 		fi
 		
@@ -220,9 +247,11 @@ while [ $# -ne 2 ]; do
 			;;
 	esac
 done
+PATH1=$(readlink -f "$1")
+PATH2=$(readlink -f "$2")
 
 #------------------------------------------------------------------------------
 # begin execution
 
-diffuzzy_compare "$1" "$2"
+diffuzzy_compare "$PATH1" "$PATH2"
 exit $?
