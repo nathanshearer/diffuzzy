@@ -153,7 +153,7 @@ function diffuzzy_unittest
 	echo "Compare two files with different sizes..."
 	dd status=none if=/dev/urandom bs=1MiB count=4 of="$TMP/01.bin"
 	dd status=none if=/dev/urandom bs=1MiB count=6 of="$TMP/02.bin"
-	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
@@ -162,13 +162,13 @@ function diffuzzy_unittest
 	echo "Compare two small files..."
 	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/01.bin"
 	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/02.bin"
-	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
 	fi
 	cp "$TMP/01.bin" "$TMP/02.bin"
-	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -ne 0 ]; then
 		echo "error: test failed."
 		return 1
@@ -179,7 +179,7 @@ function diffuzzy_unittest
 	cat "$TMP/1.random" >> "$TMP/01.bin"
 	dd status=none if=/dev/urandom bs=512 count=1 of="$TMP/02.bin"
 	cat "$TMP/1.random" >> "$TMP/02.bin"
-	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
@@ -190,7 +190,7 @@ function diffuzzy_unittest
 	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/01.bin"
 	cp "$TMP/1.random" "$TMP/02.bin"
 	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/02.bin"
-	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
@@ -202,7 +202,7 @@ function diffuzzy_unittest
 	cat "$TMP/3.random" >> "$TMP/01.bin"
 	cat "$TMP/1.random" > "$TMP/02.bin"
 	truncate -s 30MiB "$TMP/02.bin"
-	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
@@ -211,15 +211,23 @@ function diffuzzy_unittest
 	echo "Simulate bitrot"
 	dd status=none if=/dev/urandom bs=1MiB count=100 >> "$TMP/01.bin"
 	cp "$TMP/01.bin" "$TMP/02.bin"
-	for ITERATOR in $(seq 1 10000); do
+	local SECTOR=0
+	while [ $SECTOR -lt 10000 ]; do
 		dd status=none if=/dev/urandom bs=512 count=1 seek=$(($RANDOM*$RANDOM%204800)) conv=notrunc of="$TMP/02.bin"
+		diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+		local RESULT=$?
+		if [ $RESULT -eq 1 ]; then
+			break
+		fi
+		SECTOR=$(($SECTOR+1))
 	done
-	diffuzzy "$TMP/01.bin" "$TMP/02.bin"
-	if [ $? -eq 0 ]; then
+	if [ $SECTOR -eq 10000 ]; then
 		echo "error: test failed."
 		return 1
+	else
+		echo "bitrot detected after $SECTOR corrupted sectors."
 	fi
-	
+
 	rm -rf "$TMP"
 }
 
