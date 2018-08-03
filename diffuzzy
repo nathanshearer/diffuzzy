@@ -19,17 +19,21 @@ function diffuzzy_compare
 		echo "Path \"$2\" does not exist."
 		return 1
 	fi
-	local PATH1=$(readlink -f "$1")
-	local PATH2=$(readlink -f "$2")
+	local PATH1="$1"
+	local PATH2="$2"
 	
-	# if only one is a file
-	if [ -f "$PATH1" -a ! -f "$PATH2" ]; then
-		echo "File type mismatch between \"$PATH1\" and \"$PATH2\"."
-		return 1
-	fi
-	if [ ! -f "$PATH1" -a -f "$PATH2" ]; then
-		echo "File type mismatch between \"$PATH1\" and \"$PATH2\"."
-		return 1
+	# if either file is non-regular and they have different types
+	PATH1_TYPE=$(stat -c %F "$PATH1")
+	PATH2_TYPE=$(stat -c %F "$PATH2")
+	echo "$PATH1_TYPE" | grep -q regular
+	PATH1_TYPE_REGULAR=$?
+	echo "$PATH2_TYPE" | grep -q regular
+	PATH2_TYPE_REGULAR=$?
+	if [ $PATH1_TYPE_REGULAR -ne 0 -o $PATH2_TYPE_REGULAR -ne 0 ]; then
+		if [ "$PATH1_TYPE" != "$PATH2_TYPE" ]; then
+			echo "File type mismatch between \"$PATH1\" ($PATH1_TYPE) and \"$PATH2\" ($PATH2_TYPE)."
+			return 1
+		fi
 	fi
 	
 	# if both are directories
@@ -146,6 +150,27 @@ function diffuzzy_unittest
 	local TMP="/tmp/diffuzzy.$$"
 	mkdir "$TMP"
 	
+	echo "Compare two files with different types: regular empty file vs. directory..."
+	touch "$TMP/01.bin"
+	mkdir "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin"
+	rmdir "$TMP/02.bin"
+	
+	echo "Compare two files with different types: regular empty file vs. fifo..."
+	touch "$TMP/01.bin"
+	mkfifo "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
+	
 	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/1.random"
 	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/2.random"
 	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/3.random"
@@ -158,6 +183,7 @@ function diffuzzy_unittest
 		echo "error: test failed."
 		return 1
 	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
 	
 	echo "Compare two small files..."
 	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/01.bin"
@@ -173,6 +199,7 @@ function diffuzzy_unittest
 		echo "error: test failed."
 		return 1
 	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
 	
 	echo "Compare two files with a different header..."
 	dd status=none if=/dev/urandom bs=512 count=1 of="$TMP/01.bin"
@@ -184,29 +211,31 @@ function diffuzzy_unittest
 		echo "error: test failed."
 		return 1
 	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
 	
 	echo "Compare two files with a different footer..."
-	cp "$TMP/1.random" "$TMP/01.bin"
+	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/01.bin"
+	cp "$TMP/01.bin" "$TMP/02.bin"
 	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/01.bin"
-	cp "$TMP/1.random" "$TMP/02.bin"
 	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/02.bin"
 	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
 	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
 	
 	echo "Simulate a preallocated failed transfer..."
-	cat "$TMP/1.random" > "$TMP/01.bin"
-	cat "$TMP/2.random" >> "$TMP/01.bin"
-	cat "$TMP/3.random" >> "$TMP/01.bin"
-	cat "$TMP/1.random" > "$TMP/02.bin"
+	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/01.bin"
+	cp "$TMP/01.bin" "$TMP/02.bin"
+	dd status=none if=/dev/urandom bs=10MiB count=2 >> "$TMP/01.bin"
 	truncate -s 30MiB "$TMP/02.bin"
 	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
 	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
 	
 	echo "Simulate bitrot"
 	dd status=none if=/dev/urandom bs=1MiB count=100 >> "$TMP/01.bin"
@@ -227,6 +256,7 @@ function diffuzzy_unittest
 	else
 		echo "bitrot detected after $SECTOR corrupted sectors."
 	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
 
 	rm -rf "$TMP"
 }
