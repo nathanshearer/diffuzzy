@@ -7,118 +7,236 @@ LICENSE="GNU General Public License 2.0"
 VERSION="0.0.0.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
-# \param $1 The first path to compare
-# \param $2 The second path to compare
+# \param "$@" The list of paths to compare
 function diffuzzy_compare
 {
-	if [ ! -e "$1" ]; then
-		echo "Path \"$1\" does not exist."
-		return 1
-	fi
-	if [ ! -e "$2" ]; then
-		echo "Path \"$2\" does not exist."
-		return 1
-	fi
 	local PATH1="$1"
 	local PATH2="$2"
-	
-	# if either file is non-regular and they have different types
-	PATH1_TYPE=$(stat -c %F "$PATH1")
-	PATH2_TYPE=$(stat -c %F "$PATH2")
-	echo "$PATH1_TYPE" | grep -q regular
-	PATH1_TYPE_REGULAR=$?
-	echo "$PATH2_TYPE" | grep -q regular
-	PATH2_TYPE_REGULAR=$?
-	if [ $PATH1_TYPE_REGULAR -ne 0 -o $PATH2_TYPE_REGULAR -ne 0 ]; then
-		if [ "$PATH1_TYPE" != "$PATH2_TYPE" ]; then
-			echo "File type mismatch between \"$PATH1\" ($PATH1_TYPE) and \"$PATH2\" ($PATH2_TYPE)."
-			return 1
-		fi
-	fi
-	
-	# if both are directories
-	if [ -d "$PATH1" -a -d "$PATH2" ]; then
-		#echo "Comparing two directory trees..."
-		{
-			cd "$PATH1"
-			find ! -type d -print0
-			cd "$PATH2"
-			find ! -type d -print0
-		} | \
-		sort -z | uniq -z | \
-		{
-			local STATUS=0
-			while read -r -d $'\0' FILE; do
-				# strip the leading ./ that find prepends to each string
-				FILE=$(echo -n "$FILE" | sed -r 's/^\.\///')
-				#echo "$FILE"
-				diffuzzy_compare "$PATH1/$FILE" "$PATH2/$FILE"
-				if [ $? -ne 0 ]; then
-					STATUS=1
-				fi
-			done
-			return $STATUS
-		}
-		if [ $? -ne 0 ]; then
-			return 1
-		fi
-		#echo "Both directory trees are the same"
-		return 0
+	local STATUS=0
+
+	#echo "Comparing:"
+	#for P in "$@"; do
+	#	echo "  $P"
+	#done
+
+	diffuzzy_compare_existential "$@"
+	if [ $? -ne 0 ]; then
+		return 1
 	fi
 
-	PATH1_SIZE=$(stat -c %s "$PATH1")
-	PATH2_SIZE=$(stat -c %s "$PATH2")
+	diffuzzy_compare_type "$@"
+	if [ $? -ne 0 ]; then
+		return 1
+	fi
 
-	# if both files are different sizes
-	if [ "$PATH1_SIZE" != "$PATH2_SIZE" ]; then
-		echo "File size mismatch between \"$PATH1\" and \"$PATH2\"."
+	local PATH_TYPE=$(stat -c %F "$1")
+	case "$PATH_TYPE" in
+		"directory")
+			diffuzzy_compare_directories "$@"
+			return $?
+			;;
+		"regular file") ;;
+		"regular empty file") ;;
+		*)
+			return 0
+			;;
+	esac
+
+	diffuzzy_compare_size "$@"
+	if [ $? -ne 0 ]; then
 		return 1
 	fi
 
 	# full comparison if both files are small
-	if [ $(echo "$PATH1_SIZE<=1024" | bc) -eq 1 ]; then
-		diff -q "$PATH1" "$PATH2" >/dev/null
+	if [ $(echo "$(stat -c %s "$1")<=4096" | bc) -eq 1 ]; then
+		diffuzzy_compare_full "$@"
+		return $?
+	fi
+
+	diffuzzy_compare_header "$@"
+	if [ $? -ne 0 ]; then
+		return 1
+	fi
+
+	diffuzzy_compare_footer "$@"
+	if [ $? -ne 0 ]; then
+		return 1
+	fi
+
+	diffuzzy_compare_offsets "$@"
+	if [ $? -ne 0 ]; then
+		return 1
+	fi
+
+	return $STATUS
+}
+
+# \brief Compare directories
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_directories
+{
+	local PATHS=("$@")
+	# build a list of files in each directory
+	{
+		for P in "${PATHS[@]}"; do
+			pushd "$P" >/dev/null 2>/dev/null
+			find -mindepth 1 -maxdepth 1 -print0
+			popd >/dev/null 2>/dev/null
+		done
+	} | \
+	sort -z | uniq -z | \
+	{
+		local STATUS=0
+		while read -r -d $'\0' FILE; do
+			# strip the leading ./ that find prepends to each string
+			FILE=$(echo -n "$FILE" | sed -r 's/^\.\///')
+
+			local SUBPATHS=()
+			for P in "${PATHS[@]}"; do
+				SUBPATHS+=("$P/$FILE")
+			done
+
+			#echo "$FILE"
+			diffuzzy_compare "${SUBPATHS[@]}"
+			if [ $? -ne 0 ]; then
+				STATUS=1
+			fi
+		done
+		return $STATUS
+	}
+	return $?
+}
+
+# \brief Compare and detect missing objects
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_existential
+{
+	local STATUS=0
+	for P in "$@"; do
+		if [ ! -e "$P" ]; then
+			# test will follow symlinks so verify the file actually doesn't exist
+			if [ -L "$P" ]; then
+				continue
+			fi
+			echo "Path \"$P\" does not exist."
+			STATUS=1
+		fi
+	done
+	return $STATUS
+}
+
+# \brief Compare the last 512 bytes
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_footer
+{
+	local STATUS=0
+	P1_SIZE=$(stat -c %s "$1")
+	P1_DATA=$(dd status=none if="$1" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0)
+	for P2 in "$@"; do
+		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0)
+		if [ "$P1_DATA" != "$P2_DATA" ]; then
+			echo "The last 512 bytes differ between \"$1\" and \"$P2\"."
+			STATUS=1
+		fi
+	done
+	return $STATUS
+}
+
+# \brief Perform a full comparison with diff
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_full
+{
+	local STATUS=0
+	for P2 in "$@"; do
+		diff -q "$1" "$P2" >/dev/null
 		if [ $? -ne 0 ]; then
-			echo "File data differs between \"$PATH1\" and \"$PATH2\"."
-			return 1
-		else
-			return 0
+			echo "File data differs between \"$1\" and \"$P2\"."
+			STATUS=1
 		fi
-	fi
+	done
+	return $STATUS
+}
 
-	# compare the first 512 bytes
-	PATH1_DATA=$(dd status=none if="$PATH1" bs=1 count=512 | base64 -w 0)
-	PATH2_DATA=$(dd status=none if="$PATH2" bs=1 count=512 | base64 -w 0)
-	if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
-		echo "The first 512 bytes differ between \"$PATH1\" and \"$PATH2\"."
-		return 1
-	fi
+# \brief Compare the first 512 bytes
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_header
+{
+	local STATUS=0
+	P1_DATA=$(dd status=none if="$1" bs=1 count=512 | base64 -w 0)
+	for P2 in "$@"; do
+		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 | base64 -w 0)
+		if [ "$P1_DATA" != "$P2_DATA" ]; then
+			echo "The first 512 bytes differ between \"$1\" and \"$P2\"."
+			STATUS=1
+		fi
+	done
+	return $STATUS
+}
 
-	# compare the last 512 bytes
-	PATH1_DATA=$(dd status=none if="$PATH1" bs=1 count=512 skip=$(($PATH1_SIZE-512)) | base64 -w 0)
-	PATH2_DATA=$(dd status=none if="$PATH2" bs=1 count=512 skip=$(($PATH2_SIZE-512)) | base64 -w 0)
-	if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
-		echo "The last 512 bytes differ between \"$PATH1\" and \"$PATH2\"."
-		return 1
-	fi
+# \brief Compare floor(log(2,file_size)) 512 byte blocks at random offsets
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_offsets
+{
+	local STATUS=0
 
-	# perform floor(log(2,file_size)) random offset comparisons
+	P1_SIZE=$(stat -c %s "$1")
 	ITERATOR=1
-	SECTORS=$(($PATH1_SIZE/512))
-	while [ $ITERATOR -lt $PATH1_SIZE ]; do
-		OFFSET=$(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS ))
-		
-		PATH1_DATA=$(dd status=none if="$PATH1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
-		PATH2_DATA=$(dd status=none if="$PATH2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
-		
-		if [ "$PATH1_DATA" != "$PATH2_DATA" ]; then
-			echo "File data differs between \"$PATH1\" and \"$PATH2\"."
-			return 1
-		fi
-		
+	SECTORS=$(($P1_SIZE/512))
+	OFFSETS=()
+	while [ $ITERATOR -lt $P1_SIZE ]; do
+		OFFSETS+=( $(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS )) )
 		ITERATOR=$(($ITERATOR*2))
 	done
-	return 0
+
+	for P2 in "$@"; do
+		for OFFSET in $(echo ${OFFSETS[@]} | tr ' ' '\n' | sort -n | uniq); do
+			P1_DATA=$(dd status=none if="$1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+			P2_DATA=$(dd status=none if="$P2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+			if [ "$P1_DATA" != "$P2_DATA" ]; then
+				echo "File data differs between \"$1\" and \"$P2\"."
+				STATUS=1
+				break
+			fi
+		done
+	done
+
+	return $STATUS
+}
+
+# \brief Compare and detect size mismatches
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_size
+{
+	local STATUS=0
+	if [ $# -ne 0 ]; then
+		local P1_SIZE=$(stat -c %s "$1")
+	fi
+	for P2 in "$@"; do
+		P2_SIZE=$(stat -c %s "$P2")
+		if [ "$P1_SIZE" != "$P2_SIZE" ]; then
+			echo "File size mismatch between \"$1\" and \"$P2\"."
+			STATUS=1
+		fi
+	done
+	return $STATUS
+}
+
+# \brief Compare and detect object type mismatches
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_type
+{
+	local STATUS=0
+	if [ $# -ne 0 ]; then
+		local P1_TYPE=$(stat -c %F "$1")
+	fi
+	for P2 in "$@"; do
+		P2_TYPE=$(stat -c %F "$P2")
+		if [ "$P1_TYPE" != "$P2_TYPE" ]; then
+			echo "File type mismatch between \"$1\" ($P1_TYPE) and \"$P2\" ($P2_TYPE)."
+			STATUS=1
+		fi
+	done
+	return $STATUS
 }
 
 # \brief Displays the help and exits the program
@@ -126,10 +244,10 @@ function diffuzzy_help
 {
 	#     01234567890123456789012345678901234567890123456789012345678901234567890123456789
 	echo "Description:"
-	echo "  Compare two paths recursively with a probabilistic diff"
+	echo "  Compare multiple paths recursively with a probabilistic algorithm"
 	echo
 	echo "Usage:"
-	echo "  $CODENAME [options] path1 path2"
+	echo "  $CODENAME [options] path1 path2 path3..."
 	echo
 	echo "Options:"
 	echo "  -h, --help"
@@ -149,7 +267,16 @@ function diffuzzy_unittest
 {
 	local TMP="/tmp/diffuzzy.$$"
 	mkdir "$TMP"
-	
+
+	echo "Compare a file with a missing file..."
+	touch "$TMP/01.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin"
+
 	echo "Compare two files with different types: regular empty file vs. directory..."
 	touch "$TMP/01.bin"
 	mkdir "$TMP/02.bin"
@@ -160,7 +287,7 @@ function diffuzzy_unittest
 	fi
 	rm -f "$TMP/01.bin"
 	rmdir "$TMP/02.bin"
-	
+
 	echo "Compare two files with different types: regular empty file vs. fifo..."
 	touch "$TMP/01.bin"
 	mkfifo "$TMP/02.bin"
@@ -170,21 +297,44 @@ function diffuzzy_unittest
 		return 1
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
-	
+
+	echo "Compare and warn of existance of two unsupported file types..."
+	mkfifo "$TMP/01.bin"
+	mkfifo "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 1 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
+
 	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/1.random"
 	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/2.random"
 	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/3.random"
-	
+
 	echo "Compare two files with different sizes..."
 	dd status=none if=/dev/urandom bs=1MiB count=4 of="$TMP/01.bin"
-	dd status=none if=/dev/urandom bs=1MiB count=6 of="$TMP/02.bin"
+	cp "$TMP/01.bin" "$TMP/02.bin"
+	dd status=none if=/dev/urandom bs=1MiB count=2 of="$TMP/02.bin" seek=4
 	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
-	
+
+	echo "Compare three files with different sizes..."
+	dd status=none if=/dev/urandom bs=1MiB count=4 of="$TMP/01.bin"
+	cp "$TMP/01.bin" "$TMP/02.bin"
+	cp "$TMP/01.bin" "$TMP/03.bin"
+	dd status=none if=/dev/urandom bs=1MiB count=2 of="$TMP/03.bin" seek=4
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+
 	echo "Compare two small files..."
 	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/01.bin"
 	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/02.bin"
@@ -200,7 +350,30 @@ function diffuzzy_unittest
 		return 1
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
-	
+
+	echo "Compare three small files..."
+	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/01.bin"
+	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/02.bin"
+	dd status=none if=/dev/urandom bs=768 count=1 of="$TMP/03.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	cp "$TMP/01.bin" "$TMP/03.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	cp "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -ne 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+
 	echo "Compare two files with a different header..."
 	dd status=none if=/dev/urandom bs=512 count=1 of="$TMP/01.bin"
 	cat "$TMP/1.random" >> "$TMP/01.bin"
@@ -212,10 +385,23 @@ function diffuzzy_unittest
 		return 1
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
-	
-	echo "Compare two files with a different footer..."
-	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/01.bin"
+
+	echo "Compare three files with a different header..."
+	dd status=none if=/dev/urandom bs=512 count=1 of="$TMP/01.bin"
+	cat "$TMP/1.random" >> "$TMP/01.bin"
 	cp "$TMP/01.bin" "$TMP/02.bin"
+	dd status=none if=/dev/urandom bs=512 count=1 of="$TMP/03.bin"
+	cat "$TMP/1.random" >> "$TMP/03.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+
+	echo "Compare two files with a different footer..."
+	cat "$TMP/1.random" >> "$TMP/01.bin"
+	cat "$TMP/1.random" >> "$TMP/02.bin"
 	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/01.bin"
 	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/02.bin"
 	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
@@ -224,7 +410,21 @@ function diffuzzy_unittest
 		return 1
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
-	
+
+	echo "Compare three files with a different footer..."
+	cat "$TMP/1.random" >> "$TMP/01.bin"
+	cat "$TMP/1.random" >> "$TMP/02.bin"
+	cat "$TMP/1.random" >> "$TMP/03.bin"
+	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/01.bin"
+	cp "$TMP/01.bin" "$TMP/02.bin"
+	dd status=none if=/dev/urandom bs=512 count=1 >> "$TMP/03.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+
 	echo "Simulate a preallocated failed transfer..."
 	dd status=none if=/dev/urandom bs=10MiB count=1 of="$TMP/01.bin"
 	cp "$TMP/01.bin" "$TMP/02.bin"
@@ -236,7 +436,7 @@ function diffuzzy_unittest
 		return 1
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
-	
+
 	echo "Simulate bitrot"
 	dd status=none if=/dev/urandom bs=1MiB count=100 >> "$TMP/01.bin"
 	cp "$TMP/01.bin" "$TMP/02.bin"
@@ -258,6 +458,28 @@ function diffuzzy_unittest
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
 
+	echo "Compare directiries containing files..."
+	mkdir "$TMP/01"
+	cat "$TMP/1.random" >> "$TMP/01/1.random"
+	cat "$TMP/2.random" >> "$TMP/01/2.random"
+	cat "$TMP/3.random" >> "$TMP/01/3.random"
+	mkdir "$TMP/02"
+	cat "$TMP/1.random" >> "$TMP/02/1.random"
+	cat "$TMP/2.random" >> "$TMP/02/2.random"
+	cat "$TMP/3.random" >> "$TMP/02/3.random"
+	diffuzzy_compare "$TMP/01" "$TMP/02"
+	if [ $? -ne 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	cat "$TMP/1.random" > "$TMP/02/3.random"
+	diffuzzy_compare "$TMP/01" "$TMP/02"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -rf "$TMP/01" "$TMP/02"
+
 	rm -rf "$TMP"
 }
 
@@ -265,31 +487,29 @@ function diffuzzy_unittest
 # command line arguments
 
 THIS="$0"
-if [ $# -eq 1 -a "$1" = "--unittest" ]; then
-	diffuzzy_unittest
-	exit $?
-fi
-if [ $# -lt 2 ]; then
+
+if [ $# -eq 0 ]; then
 	diffuzzy_help
 	exit 1
 fi
-while [ $# -ne 2 ]; do
+if [ $# -eq 1 ]; then
 	case "$1" in
 		"-h"|"--help")
 			diffuzzy_help
 			exit 1
+			;;
+		"--unittest")
+			diffuzzy_unittest
+			exit
 			;;
 		*)
 			diffuzzy_help
 			exit 1
 			;;
 	esac
-done
-PATH1=$(readlink -f "$1")
-PATH2=$(readlink -f "$2")
+fi
 
 #------------------------------------------------------------------------------
 # begin execution
 
-diffuzzy_compare "$PATH1" "$PATH2"
-exit $?
+diffuzzy_compare "$@"

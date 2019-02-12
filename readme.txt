@@ -1,8 +1,8 @@
 Description:
-  Compare two paths recursively with a probabilistic diff
+  Compare multiple paths recursively with a probabilistic algorithm
 
 Usage:
-  diffuzzy [options] path1 path2
+  diffuzzy [options] path1 path2 path3...
 
 Options:
   -h, --help
