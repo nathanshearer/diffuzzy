@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="0.0.0.0"
+VERSION="1.0.0.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -55,7 +55,7 @@ function diffuzzy_compare
 	fi
 
 	# full comparison if both files are small
-	if [ $(echo "$(stat -c %s "$1")<=4096" | bc) -eq 1 ]; then
+	if [ "$(stat -c %s "$1")" -le 4096 ]; then
 		diffuzzy_compare_full "$@"
 		return $?
 	fi
@@ -510,13 +510,12 @@ function diffuzzy_unittest
 #------------------------------------------------------------------------------
 # default configuration
 
-COMPARE_EXISTENTIAL=false
-COMPARE_TYPE=false
-COMPARE_SIZE=false
-COMPARE_HEADER=false
-COMPARE_FOOTER=false
-COMPARE_OFFSETS=false
-METHOD=existential,type,size,header,footer,offsets
+COMPARE_EXISTENTIAL=true
+COMPARE_TYPE=true
+COMPARE_SIZE=true
+COMPARE_HEADER=true
+COMPARE_FOOTER=true
+COMPARE_OFFSETS=true
 VERBOSE=0
 
 #------------------------------------------------------------------------------
@@ -549,19 +548,24 @@ if [ "$1" = "-v" ]; then
 	shift
 fi
 if [ "$1" = "-m" -o "$1" = "--method" ]; then
-	METHOD="$2"
+	COMPARE_EXISTENTIAL=false
+	COMPARE_TYPE=false
+	COMPARE_SIZE=false
+	COMPARE_HEADER=false
+	COMPARE_FOOTER=false
+	COMPARE_OFFSETS=false
+	for M in $(echo -n "$2" | tr ',' ' '); do
+		case "$M" in
+			"existential") COMPARE_EXISTENTIAL=true ;;
+			"type") COMPARE_TYPE=true ;;
+			"size") COMPARE_SIZE=true ;;
+			"header") COMPARE_HEADER=true ;;
+			"footer") COMPARE_FOOTER=true ;;
+			"offsets") COMPARE_OFFSETS=true ;;
+		esac
+	done
 	shift 2
 fi
-for M in $(echo -n "$METHOD" | tr ',' ' '); do
-	case "$M" in
-		"existential") COMPARE_EXISTENTIAL=true ;;
-		"type") COMPARE_TYPE=true ;;
-		"size") COMPARE_SIZE=true ;;
-		"header") COMPARE_HEADER=true ;;
-		"footer") COMPARE_FOOTER=true ;;
-		"offsets") COMPARE_OFFSETS=true ;;
-	esac
-done
 
 #------------------------------------------------------------------------------
 # begin execution

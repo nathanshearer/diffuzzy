@@ -21,6 +21,6 @@ Options:
     Output each set of files that are compared.
 
 Version:
-  diffuzzy 0.0.0.0
+  diffuzzy 1.0.0.0
   Copyright (C) 2018 Nathan Shearer
   Licensed under GNU General Public License 2.0
