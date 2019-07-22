@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="1.0.0.0"
+VERSION="1.1.0.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -22,17 +22,11 @@ function diffuzzy_compare
 	fi
 
 	if $COMPARE_EXISTENTIAL; then
-		diffuzzy_compare_existential "$@"
-		if [ $? -ne 0 ]; then
-			return 1
-		fi
+		diffuzzy_compare_existential "$@" || return
 	fi
 
 	if $COMPARE_TYPE; then
-		diffuzzy_compare_type "$@"
-		if [ $? -ne 0 ]; then
-			return 1
-		fi
+		diffuzzy_compare_type "$@" || return
 	fi
 
 	case $(stat -c %F "$1") in
@@ -48,37 +42,23 @@ function diffuzzy_compare
 	esac
 
 	if $COMPARE_SIZE; then
-		diffuzzy_compare_size "$@"
-		if [ $? -ne 0 ]; then
-			return 1
-		fi
+		diffuzzy_compare_size "$@" || return
 	fi
 
-	# full comparison if both files are small
-	if [ "$(stat -c %s "$1")" -le 4096 ]; then
-		diffuzzy_compare_full "$@"
-		return $?
+	if $COMPARE_FULL_IF_SMALL; then
+		diffuzzy_compare_full_if_small "$@" || return
 	fi
 
 	if $COMPARE_HEADER; then
-		diffuzzy_compare_header "$@"
-		if [ $? -ne 0 ]; then
-			return 1
-		fi
+		diffuzzy_compare_header "$@" || return
 	fi
 
 	if $COMPARE_FOOTER; then
-		diffuzzy_compare_footer "$@"
-		if [ $? -ne 0 ]; then
-			return 1
-		fi
+		diffuzzy_compare_footer "$@" || return
 	fi
 
 	if $COMPARE_OFFSETS; then
-		diffuzzy_compare_offsets "$@"
-		if [ $? -ne 0 ]; then
-			return 1
-		fi
+		diffuzzy_compare_offsets "$@" || return
 	fi
 
 	return $STATUS
@@ -167,6 +147,24 @@ function diffuzzy_compare_full
 		fi
 	done
 	return $STATUS
+}
+
+# \brief Perform a full comparison with diff if the files are 4096 bytes or smaller
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_full_if_small
+{
+	local SIZE_MAX=0
+	local SIZE=0
+	for P in "$@"; do
+		SIZE=$(stat -c %s "$P")
+		if [ $SIZE_MAX -lt $SIZE ]; then
+			SIZE_MAX=$SIZE
+		fi
+	done
+	if [ $SIZE_MAX -le 4096 ]; then
+		diffuzzy_compare_full "$@"
+		return $?
+	fi
 }
 
 # \brief Compare the first 512 bytes
@@ -266,14 +264,15 @@ function diffuzzy_help
 	echo "    Output this help message and exit."
 	echo "  -m,--method method1,method2,..."
 	echo "    A comma-separated list of which comparisons to run:"
-	echo "      existential  default  Detect missing objects"
-	echo "      type         default  Detect mismatched file types"
-	#echo "      symlink      default  Detect symlinks with different targets"
-	#echo "      device       default  Detect major and minor type mismatches"
-	echo "      size         default  Detect file size mismatches"
-	echo "      header       default  Compare the first 512 bytes"
-	echo "      footer       default  Compare the last 512 bytes"
-	echo "      offsets      default  Compare floor(log(2,size)) random 512 byte offsets"
+	echo "      existential    default  Detect missing objects"
+	echo "      type           default  Detect mismatched file types"
+	#echo "      symlink        default  Detect symlinks with different targets"
+	#echo "      device         default  Detect major and minor type mismatches"
+	echo "      size           default  Detect file size mismatches"
+	echo "      full-if-small  default  Compare all data for files smaller than 4096 bytes"
+	echo "      header         default  Compare the first 512 bytes"
+	echo "      footer         default  Compare the last 512 bytes"
+	echo "      offsets        default  Compare floor(log(2,size)) random 512 byte offsets"
 	echo "  --unittest"
 	echo "    Perform unit tests to verify functionality of this script."
 	echo "  -v"
@@ -513,6 +512,7 @@ function diffuzzy_unittest
 COMPARE_EXISTENTIAL=true
 COMPARE_TYPE=true
 COMPARE_SIZE=true
+COMPARE_FULL_IF_SMALL=true
 COMPARE_HEADER=true
 COMPARE_FOOTER=true
 COMPARE_OFFSETS=true
@@ -551,6 +551,7 @@ if [ "$1" = "-m" -o "$1" = "--method" ]; then
 	COMPARE_EXISTENTIAL=false
 	COMPARE_TYPE=false
 	COMPARE_SIZE=false
+	COMPARE_FULL_IF_SMALL=false
 	COMPARE_HEADER=false
 	COMPARE_FOOTER=false
 	COMPARE_OFFSETS=false
@@ -559,6 +560,7 @@ if [ "$1" = "-m" -o "$1" = "--method" ]; then
 			"existential") COMPARE_EXISTENTIAL=true ;;
 			"type") COMPARE_TYPE=true ;;
 			"size") COMPARE_SIZE=true ;;
+			"full-if-small") COMPARE_FULL_IF_SMALL=true ;;
 			"header") COMPARE_HEADER=true ;;
 			"footer") COMPARE_FOOTER=true ;;
 			"offsets") COMPARE_OFFSETS=true ;;
