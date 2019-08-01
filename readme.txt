@@ -12,7 +12,7 @@ Options:
       existential    default  Detect missing objects
       type           default  Detect mismatched file types
       size           default  Detect file size mismatches
-      full-if-small  default  Compare all data for files smaller than 4096 bytes
+      data           default  Compare file data
       header         default  Compare the first 512 bytes
       footer         default  Compare the last 512 bytes
       offsets        default  Compare floor(log(2,size)) random 512 byte offsets
@@ -21,7 +21,12 @@ Options:
   -v
     Output each set of files that are compared.
 
+Details:
+  The data comparison method will compare all bits if the files are 4096 bytes
+  or smaller. If the files are larger than 4096 bytes, then the header, footer,
+  and floor(log(2,size)) random 512 byte offsets are compared.
+
 Version:
-  diffuzzy 1.1.0.0
+  diffuzzy 1.2.0.0
   Copyright (C) 2018 Nathan Shearer
   Licensed under GNU General Public License 2.0

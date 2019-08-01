@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="1.1.0.0"
+VERSION="1.2.0.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -44,24 +44,40 @@ function diffuzzy_compare
 	if $COMPARE_SIZE; then
 		diffuzzy_compare_size "$@" || return
 	fi
-
-	if $COMPARE_FULL_IF_SMALL; then
-		diffuzzy_compare_full_if_small "$@" || return
-	fi
-
-	if $COMPARE_HEADER; then
-		diffuzzy_compare_header "$@" || return
-	fi
-
-	if $COMPARE_FOOTER; then
-		diffuzzy_compare_footer "$@" || return
-	fi
-
-	if $COMPARE_OFFSETS; then
-		diffuzzy_compare_offsets "$@" || return
+	
+	if $COMPARE_DATA; then
+		diffuzzy_compare_data "$@" || return
 	fi
 
 	return $STATUS
+}
+
+# \brief Compare file data
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_data
+{
+	local SIZE_MAX=0
+	local SIZE=0
+	for P in "$@"; do
+		SIZE=$(stat -c %s "$P")
+		if [ $SIZE_MAX -lt $SIZE ]; then
+			SIZE_MAX=$SIZE
+		fi
+	done
+	if [ $SIZE_MAX -le 4096 ]; then
+		diffuzzy_compare_full "$@"
+		return $?
+	else
+		if $COMPARE_HEADER; then
+			diffuzzy_compare_header "$@" || return
+		fi
+		if $COMPARE_FOOTER; then
+			diffuzzy_compare_footer "$@" || return
+		fi
+		if $COMPARE_OFFSETS; then
+			diffuzzy_compare_offsets "$@" || return
+		fi
+	fi
 }
 
 # \brief Compare directories
@@ -147,24 +163,6 @@ function diffuzzy_compare_full
 		fi
 	done
 	return $STATUS
-}
-
-# \brief Perform a full comparison with diff if the files are 4096 bytes or smaller
-# \param "$@" The list of paths to compare
-function diffuzzy_compare_full_if_small
-{
-	local SIZE_MAX=0
-	local SIZE=0
-	for P in "$@"; do
-		SIZE=$(stat -c %s "$P")
-		if [ $SIZE_MAX -lt $SIZE ]; then
-			SIZE_MAX=$SIZE
-		fi
-	done
-	if [ $SIZE_MAX -le 4096 ]; then
-		diffuzzy_compare_full "$@"
-		return $?
-	fi
 }
 
 # \brief Compare the first 512 bytes
@@ -269,7 +267,7 @@ function diffuzzy_help
 	#echo "      symlink        default  Detect symlinks with different targets"
 	#echo "      device         default  Detect major and minor type mismatches"
 	echo "      size           default  Detect file size mismatches"
-	echo "      full-if-small  default  Compare all data for files smaller than 4096 bytes"
+	echo "      data           default  Compare file data"
 	echo "      header         default  Compare the first 512 bytes"
 	echo "      footer         default  Compare the last 512 bytes"
 	echo "      offsets        default  Compare floor(log(2,size)) random 512 byte offsets"
@@ -277,6 +275,11 @@ function diffuzzy_help
 	echo "    Perform unit tests to verify functionality of this script."
 	echo "  -v"
 	echo "    Output each set of files that are compared."
+	echo 
+	echo "Details:"
+	echo "  The data comparison method will compare all bits if the files are 4096 bytes"
+	echo "  or smaller. If the files are larger than 4096 bytes, then the header, footer,"
+	echo "  and floor(log(2,size)) random 512 byte offsets are compared."
 	echo
 	echo "Version:"
 	echo "  $NAME $VERSION"
@@ -512,7 +515,7 @@ function diffuzzy_unittest
 COMPARE_EXISTENTIAL=true
 COMPARE_TYPE=true
 COMPARE_SIZE=true
-COMPARE_FULL_IF_SMALL=true
+COMPARE_DATA=true
 COMPARE_HEADER=true
 COMPARE_FOOTER=true
 COMPARE_OFFSETS=true
@@ -551,7 +554,7 @@ if [ "$1" = "-m" -o "$1" = "--method" ]; then
 	COMPARE_EXISTENTIAL=false
 	COMPARE_TYPE=false
 	COMPARE_SIZE=false
-	COMPARE_FULL_IF_SMALL=false
+	COMPARE_DATA=false
 	COMPARE_HEADER=false
 	COMPARE_FOOTER=false
 	COMPARE_OFFSETS=false
@@ -560,7 +563,7 @@ if [ "$1" = "-m" -o "$1" = "--method" ]; then
 			"existential") COMPARE_EXISTENTIAL=true ;;
 			"type") COMPARE_TYPE=true ;;
 			"size") COMPARE_SIZE=true ;;
-			"full-if-small") COMPARE_FULL_IF_SMALL=true ;;
+			"data") COMPARE_DATA=true ;;
 			"header") COMPARE_HEADER=true ;;
 			"footer") COMPARE_FOOTER=true ;;
 			"offsets") COMPARE_OFFSETS=true ;;
