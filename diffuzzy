@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="1.2.0.0"
+VERSION="2.0.0.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -17,7 +17,7 @@ function diffuzzy_compare
 	if [ $VERBOSE -ge 1 ]; then
 		echo "Comparing:"
 		for P in "$@"; do
-			echo "  $P"
+			echo "  '$P'"
 		done
 	fi
 
@@ -126,7 +126,7 @@ function diffuzzy_compare_existential
 			if [ -L "$P" ]; then
 				continue
 			fi
-			echo "Path \"$P\" does not exist."
+			echo "Path '$P' does not exist."
 			STATUS=1
 		fi
 	done
@@ -143,7 +143,7 @@ function diffuzzy_compare_footer
 	for P2 in "$@"; do
 		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0)
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
-			echo "The last 512 bytes differ between \"$1\" and \"$P2\"."
+			echo "The last 512 bytes differ between '$1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -158,7 +158,7 @@ function diffuzzy_compare_full
 	for P2 in "$@"; do
 		diff -q "$1" "$P2" >/dev/null
 		if [ $? -ne 0 ]; then
-			echo "File data differs between \"$1\" and \"$P2\"."
+			echo "File data differs between '$1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -174,7 +174,7 @@ function diffuzzy_compare_header
 	for P2 in "$@"; do
 		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 | base64 -w 0)
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
-			echo "The first 512 bytes differ between \"$1\" and \"$P2\"."
+			echo "The first 512 bytes differ between '$1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -201,7 +201,7 @@ function diffuzzy_compare_offsets
 			P1_DATA=$(dd status=none if="$1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
 			P2_DATA=$(dd status=none if="$P2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
 			if [ "$P1_DATA" != "$P2_DATA" ]; then
-				echo "File data differs between \"$1\" and \"$P2\"."
+				echo "File data differs between '$1' and '$P2'."
 				STATUS=1
 				break
 			fi
@@ -222,7 +222,7 @@ function diffuzzy_compare_size
 	for P2 in "$@"; do
 		P2_SIZE=$(stat -c %s "$P2")
 		if [ "$P1_SIZE" != "$P2_SIZE" ]; then
-			echo "File size mismatch between \"$1\" and \"$P2\"."
+			echo "File size mismatch between '$1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -240,7 +240,7 @@ function diffuzzy_compare_type
 	for P2 in "$@"; do
 		P2_TYPE=$(stat -c %F "$P2")
 		if [ "$P1_TYPE" != "$P2_TYPE" ]; then
-			echo "File type mismatch between \"$1\" ($P1_TYPE) and \"$P2\" ($P2_TYPE)."
+			echo "File type mismatch between '$1' ($P1_TYPE) and '$P2' ($P2_TYPE)."
 			STATUS=1
 		fi
 	done
@@ -255,22 +255,27 @@ function diffuzzy_help
 	echo "  Compare multiple paths recursively with a probabilistic algorithm"
 	echo
 	echo "Usage:"
-	echo "  $CODENAME [options] path1 path2 path3..."
+	echo "  $CODENAME [OPTION]... PATH1 PATH2 [PATH3]..."
 	echo
 	echo "Options:"
 	echo "  -h, --help"
 	echo "    Output this help message and exit."
 	echo "  -m,--method method1,method2,..."
 	echo "    A comma-separated list of which comparisons to run:"
-	echo "      existential    default  Detect missing objects"
-	echo "      type           default  Detect mismatched file types"
-	#echo "      symlink        default  Detect symlinks with different targets"
-	#echo "      device         default  Detect major and minor type mismatches"
-	echo "      size           default  Detect file size mismatches"
-	echo "      data           default  Compare file data"
-	echo "      header         default  Compare the first 512 bytes"
-	echo "      footer         default  Compare the last 512 bytes"
-	echo "      offsets        default  Compare floor(log(2,size)) random 512 byte offsets"
+	echo "      existential   default  Detect missing objects"
+	#echo "      mode                   Detect differences in file mode bits"
+	echo "      type          default  Detect mismatched file types"
+	#echo "      symlink       default  Detect symlinks with different targets"
+	#echo "      device        default  Detect major and minor type mismatches"
+	echo "      size          default  Detect file size mismatches"
+	echo "      data          default  Compare file data"
+	echo "      header        default  Compare the first 512 bytes"
+	echo "      footer        default  Compare the last 512 bytes"
+	echo "      offsets       default  Compare floor(log(2,size)) random 512 byte offsets"
+	#echo "      offsets=log2  default  Compare floor(log(2,size)) random 512 byte offsets"
+	#echo "      offsets=sqrt  default  Compare floor(sqrt(size)) random 512 byte offsets"
+	#echo "      offsets=n     default  Compare n random 512 byte offsets"
+	#echo "      block         default  Compare block device data"
 	echo "  --unittest"
 	echo "    Perform unit tests to verify functionality of this script."
 	echo "  -v"
@@ -285,7 +290,6 @@ function diffuzzy_help
 	echo "  $NAME $VERSION"
 	echo "  $COPYRIGHT"
 	echo "  Licensed under $LICENSE"
-	exit
 }
 
 # \brief Perform unit tests to verify functionality of this script
@@ -534,7 +538,7 @@ if [ $# -eq 1 ]; then
 	case "$1" in
 		"-h"|"--help")
 			diffuzzy_help
-			exit 1
+			exit
 			;;
 		"--unittest")
 			diffuzzy_unittest
@@ -546,30 +550,49 @@ if [ $# -eq 1 ]; then
 			;;
 	esac
 fi
-if [ "$1" = "-v" ]; then
-	VERBOSE=1
-	shift
-fi
-if [ "$1" = "-m" -o "$1" = "--method" ]; then
-	COMPARE_EXISTENTIAL=false
-	COMPARE_TYPE=false
-	COMPARE_SIZE=false
-	COMPARE_DATA=false
-	COMPARE_HEADER=false
-	COMPARE_FOOTER=false
-	COMPARE_OFFSETS=false
-	for M in $(echo -n "$2" | tr ',' ' '); do
-		case "$M" in
-			"existential") COMPARE_EXISTENTIAL=true ;;
-			"type") COMPARE_TYPE=true ;;
-			"size") COMPARE_SIZE=true ;;
-			"data") COMPARE_DATA=true ;;
-			"header") COMPARE_HEADER=true ;;
-			"footer") COMPARE_FOOTER=true ;;
-			"offsets") COMPARE_OFFSETS=true ;;
-		esac
-	done
-	shift 2
+while [ $# -ne 0 ]; do
+	case "$1" in
+		"-v")
+			VERBOSE=1
+			shift
+			;;
+		"-m"|"--method")
+			COMPARE_EXISTENTIAL=false
+			COMPARE_TYPE=false
+			COMPARE_SIZE=false
+			COMPARE_DATA=false
+			COMPARE_HEADER=false
+			COMPARE_FOOTER=false
+			COMPARE_OFFSETS=false
+			for M in $(echo -n "$2" | tr ',' ' '); do
+				case "$M" in
+					"existential") COMPARE_EXISTENTIAL=true ;;
+					"type") COMPARE_TYPE=true ;;
+					"size") COMPARE_SIZE=true ;;
+					"data") COMPARE_DATA=true ;;
+					"header")
+						COMPARE_DATA=true
+						COMPARE_HEADER=true
+						;;
+					"footer")
+						COMPARE_DATA=true
+						COMPARE_FOOTER=true
+						;;
+					"offsets")
+						COMPARE_DATA=true
+						COMPARE_OFFSETS=true
+						;;
+				esac
+			done
+			shift 2
+			;;
+		*)
+			break;;
+	esac
+done
+if [ $# -lt 2 ]; then
+	echo "error: a minimum of two paths must be provided for comparison."
+	exit 1
 fi
 
 #------------------------------------------------------------------------------
