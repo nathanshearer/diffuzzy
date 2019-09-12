@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.0.0.0"
+VERSION="2.1.0.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -23,6 +23,10 @@ function diffuzzy_compare
 
 	if $COMPARE_EXISTENTIAL; then
 		diffuzzy_compare_existential "$@" || return
+	fi
+
+	if $COMPARE_MODE; then
+		diffuzzy_compare_mode "$@" || return
 	fi
 
 	if $COMPARE_TYPE; then
@@ -181,6 +185,24 @@ function diffuzzy_compare_header
 	return $STATUS
 }
 
+# \brief Compare file mode bits
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_mode
+{
+	local STATUS=0
+	P1="$1"
+	P1_MODE=$(stat -c '%a %A' "$1")
+	shift
+	for P2 in "$@"; do
+		P2_MODE=$(stat -c '%a %A' "$P2")
+		if [ "$P1_MODE" != "$P2_MODE" ]; then
+			echo "File mode mismatch between '$P1' ($P1_MODE) and '$P2' ($P2_MODE)."
+			STATUS=1
+		fi
+	done
+	return $STATUS
+}
+
 # \brief Compare floor(log(2,file_size)) 512 byte blocks at random offsets
 # \param "$@" The list of paths to compare
 function diffuzzy_compare_offsets
@@ -263,11 +285,11 @@ function diffuzzy_help
 	echo "  -m,--method method1,method2,..."
 	echo "    A comma-separated list of which comparisons to run:"
 	echo "      existential   default  Detect missing objects"
-	#echo "      mode                   Detect differences in file mode bits"
-	echo "      type          default  Detect mismatched file types"
-	#echo "      symlink       default  Detect symlinks with different targets"
-	#echo "      device        default  Detect major and minor type mismatches"
-	echo "      size          default  Detect file size mismatches"
+	echo "      mode                   Compare file mode bits"
+	echo "      type          default  Compare file types"
+	#echo "      symlink       default  Compare symlink target paths"
+	#echo "      device        default  Compare major and minor device type"
+	echo "      size          default  Compare file size"
 	echo "      data          default  Compare file data"
 	echo "      header        default  Compare the first 512 bytes"
 	echo "      footer        default  Compare the last 512 bytes"
@@ -306,6 +328,21 @@ function diffuzzy_unittest
 		return 1
 	fi
 	rm -f "$TMP/01.bin"
+
+	echo "Compare two files with different mode bits..."
+	touch "$TMP/01.bin"
+	touch "$TMP/02.bin"
+	chmod a+x "$TMP/01.bin"
+	chmod a-x "$TMP/02.bin"
+	COMPARE_MODE_OLD=$COMPARE_MODE
+	COMPARE_MODE=true
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
+	COMPARE_MODE=$COMPARE_MODE_OLD
 
 	echo "Compare two files with different types: regular empty file vs. directory..."
 	touch "$TMP/01.bin"
@@ -517,6 +554,7 @@ function diffuzzy_unittest
 # default configuration
 
 COMPARE_EXISTENTIAL=true
+COMPARE_MODE=false
 COMPARE_TYPE=true
 COMPARE_SIZE=true
 COMPARE_DATA=true
@@ -558,6 +596,7 @@ while [ $# -ne 0 ]; do
 			;;
 		"-m"|"--method")
 			COMPARE_EXISTENTIAL=false
+			COMPARE_MODE=false
 			COMPARE_TYPE=false
 			COMPARE_SIZE=false
 			COMPARE_DATA=false
@@ -567,6 +606,7 @@ while [ $# -ne 0 ]; do
 			for M in $(echo -n "$2" | tr ',' ' '); do
 				case "$M" in
 					"existential") COMPARE_EXISTENTIAL=true ;;
+					"mode") COMPARE_MODE=true ;;
 					"type") COMPARE_TYPE=true ;;
 					"size") COMPARE_SIZE=true ;;
 					"data") COMPARE_DATA=true ;;
