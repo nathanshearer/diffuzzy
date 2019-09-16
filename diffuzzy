@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.1.0.0"
+VERSION="2.1.1.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -142,12 +142,15 @@ function diffuzzy_compare_existential
 function diffuzzy_compare_footer
 {
 	local STATUS=0
-	P1_SIZE=$(stat -c %s "$1")
-	P1_DATA=$(dd status=none if="$1" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0)
+	local P1="$1"
+	shift
+	local P1_SIZE=$(stat -c %s "$P1")
+	local P1_DATA=$(dd status=none if="$P1" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0)
 	for P2 in "$@"; do
-		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0)
+		P2_SIZE=$(stat -c %s "$P2")
+		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 skip=$(($P2_SIZE-512)) | base64 -w 0)
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
-			echo "The last 512 bytes differ between '$1' and '$P2'."
+			echo "The last 512 bytes differ between '$P1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -159,10 +162,12 @@ function diffuzzy_compare_footer
 function diffuzzy_compare_full
 {
 	local STATUS=0
+	local P1="$1"
+	shift
 	for P2 in "$@"; do
-		diff -q "$1" "$P2" >/dev/null
+		diff -q "$P1" "$P2" >/dev/null
 		if [ $? -ne 0 ]; then
-			echo "File data differs between '$1' and '$P2'."
+			echo "File data differs between '$P1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -174,11 +179,13 @@ function diffuzzy_compare_full
 function diffuzzy_compare_header
 {
 	local STATUS=0
-	P1_DATA=$(dd status=none if="$1" bs=1 count=512 | base64 -w 0)
+	local P1="$1"
+	shift
+	local P1_DATA=$(dd status=none if="$P1" bs=1 count=512 | base64 -w 0)
 	for P2 in "$@"; do
 		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 | base64 -w 0)
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
-			echo "The first 512 bytes differ between '$1' and '$P2'."
+			echo "The first 512 bytes differ between '$P1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -190,9 +197,9 @@ function diffuzzy_compare_header
 function diffuzzy_compare_mode
 {
 	local STATUS=0
-	P1="$1"
-	P1_MODE=$(stat -c '%a %A' "$1")
+	local P1="$1"
 	shift
+	local P1_MODE=$(stat -c '%a %A' "$P1")
 	for P2 in "$@"; do
 		P2_MODE=$(stat -c '%a %A' "$P2")
 		if [ "$P1_MODE" != "$P2_MODE" ]; then
@@ -209,10 +216,12 @@ function diffuzzy_compare_offsets
 {
 	local STATUS=0
 
-	P1_SIZE=$(stat -c %s "$1")
-	ITERATOR=1
-	SECTORS=$(($P1_SIZE/512))
-	OFFSETS=()
+	local P1="$1"
+	shift
+	local P1_SIZE=$(stat -c %s "$P1")
+	local ITERATOR=1
+	local SECTORS=$(($P1_SIZE/512))
+	local OFFSETS=()
 	while [ $ITERATOR -lt $P1_SIZE ]; do
 		OFFSETS+=( $(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS )) )
 		ITERATOR=$(($ITERATOR*2))
@@ -220,10 +229,10 @@ function diffuzzy_compare_offsets
 
 	for P2 in "$@"; do
 		for OFFSET in $(echo ${OFFSETS[@]} | tr ' ' '\n' | sort -n | uniq); do
-			P1_DATA=$(dd status=none if="$1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+			P1_DATA=$(dd status=none if="$P1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
 			P2_DATA=$(dd status=none if="$P2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
 			if [ "$P1_DATA" != "$P2_DATA" ]; then
-				echo "File data differs between '$1' and '$P2'."
+				echo "File data differs between '$P1' and '$P2'."
 				STATUS=1
 				break
 			fi
@@ -239,12 +248,14 @@ function diffuzzy_compare_size
 {
 	local STATUS=0
 	if [ $# -ne 0 ]; then
-		local P1_SIZE=$(stat -c %s "$1")
+		local P1="$1"
+		shift
+		local P1_SIZE=$(stat -c %s "$P1")
 	fi
 	for P2 in "$@"; do
 		P2_SIZE=$(stat -c %s "$P2")
 		if [ "$P1_SIZE" != "$P2_SIZE" ]; then
-			echo "File size mismatch between '$1' and '$P2'."
+			echo "File size mismatch between '$P1' and '$P2'."
 			STATUS=1
 		fi
 	done
@@ -257,12 +268,14 @@ function diffuzzy_compare_type
 {
 	local STATUS=0
 	if [ $# -ne 0 ]; then
-		local P1_TYPE=$(stat -c %F "$1")
+		local P1="$1"
+		shift
+		local P1_TYPE=$(stat -c %F "$P1")
 	fi
 	for P2 in "$@"; do
 		P2_TYPE=$(stat -c %F "$P2")
 		if [ "$P1_TYPE" != "$P2_TYPE" ]; then
-			echo "File type mismatch between '$1' ($P1_TYPE) and '$P2' ($P2_TYPE)."
+			echo "File type mismatch between '$P1' ($P1_TYPE) and '$P2' ($P2_TYPE)."
 			STATUS=1
 		fi
 	done
@@ -297,7 +310,7 @@ function diffuzzy_help
 	#echo "      offsets=log2  default  Compare floor(log(2,size)) random 512 byte offsets"
 	#echo "      offsets=sqrt  default  Compare floor(sqrt(size)) random 512 byte offsets"
 	#echo "      offsets=n     default  Compare n random 512 byte offsets"
-	#echo "      block         default  Compare block device data"
+	#echo "      blockdata     default  Compare block device data"
 	echo "  --unittest"
 	echo "    Perform unit tests to verify functionality of this script."
 	echo "  -v"
