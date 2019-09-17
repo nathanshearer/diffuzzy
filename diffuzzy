@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.1.1.0"
+VERSION="2.1.2.0"
 
 # \brief Compare two paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -145,10 +145,10 @@ function diffuzzy_compare_footer
 	local P1="$1"
 	shift
 	local P1_SIZE=$(stat -c %s "$P1")
-	local P1_DATA=$(dd status=none if="$P1" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0)
+	local P1_DATA=$(set -o pipefail; dd status=none if="$P1" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0) || return
 	for P2 in "$@"; do
 		P2_SIZE=$(stat -c %s "$P2")
-		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 skip=$(($P2_SIZE-512)) | base64 -w 0)
+		P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=1 count=512 skip=$(($P2_SIZE-512)) | base64 -w 0) || return
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
 			echo "The last 512 bytes differ between '$P1' and '$P2'."
 			STATUS=1
@@ -181,9 +181,9 @@ function diffuzzy_compare_header
 	local STATUS=0
 	local P1="$1"
 	shift
-	local P1_DATA=$(dd status=none if="$P1" bs=1 count=512 | base64 -w 0)
+	local P1_DATA=$(set -o pipefail; dd status=none if="$P1" bs=1 count=512 | base64 -w 0) || return
 	for P2 in "$@"; do
-		P2_DATA=$(dd status=none if="$P2" bs=1 count=512 | base64 -w 0)
+		P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=1 count=512 | base64 -w 0) || return
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
 			echo "The first 512 bytes differ between '$P1' and '$P2'."
 			STATUS=1
@@ -229,8 +229,8 @@ function diffuzzy_compare_offsets
 
 	for P2 in "$@"; do
 		for OFFSET in $(echo ${OFFSETS[@]} | tr ' ' '\n' | sort -n | uniq); do
-			P1_DATA=$(dd status=none if="$P1" bs=512 count=1 skip=$OFFSET | base64 -w 0)
-			P2_DATA=$(dd status=none if="$P2" bs=512 count=1 skip=$OFFSET | base64 -w 0)
+			P1_DATA=$(set -o pipefail; dd status=none if="$P1" bs=512 count=1 skip=$OFFSET | base64 -w 0) || return
+			P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=512 count=1 skip=$OFFSET | base64 -w 0) || return
 			if [ "$P1_DATA" != "$P2_DATA" ]; then
 				echo "File data differs between '$P1' and '$P2'."
 				STATUS=1

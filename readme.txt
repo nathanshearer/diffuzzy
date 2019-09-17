@@ -28,6 +28,6 @@ Details:
   and floor(log(2,size)) random 512 byte offsets are compared.
 
 Version:
-  diffuzzy 2.1.1.0
+  diffuzzy 2.1.2.0
   Copyright (C) 2018 Nathan Shearer
   Licensed under GNU General Public License 2.0
