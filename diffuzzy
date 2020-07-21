@@ -4,16 +4,12 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.1.2.0"
+VERSION="2.1.3.0"
 
-# \brief Compare two paths recursively with a probabilistic diff
+# \brief Compare paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
 function diffuzzy_compare
 {
-	local PATH1="$1"
-	local PATH2="$2"
-	local STATUS=0
-
 	if [ $VERBOSE -ge 1 ]; then
 		echo "Comparing:"
 		for P in "$@"; do
@@ -52,8 +48,6 @@ function diffuzzy_compare
 	if $COMPARE_DATA; then
 		diffuzzy_compare_data "$@" || return
 	fi
-
-	return $STATUS
 }
 
 # \brief Compare file data
@@ -100,7 +94,7 @@ function diffuzzy_compare_directories
 	sort -z | uniq -z | \
 	{
 		local STATUS=0
-		while read -r -d $'\0' FILE; do
+		while IFS= read -r -d $'\0' FILE; do
 			# strip the leading ./ that find prepends to each string
 			FILE=$(echo -n "$FILE" | sed -r 's/^\.\///')
 
@@ -517,11 +511,12 @@ function diffuzzy_unittest
 	fi
 	rm -f "$TMP/01.bin" "$TMP/02.bin"
 
-	echo "Simulate bitrot"
+	echo -n "Simulate bitrot"
 	dd status=none if=/dev/urandom bs=1MiB count=100 >> "$TMP/01.bin"
 	cp "$TMP/01.bin" "$TMP/02.bin"
 	local SECTOR=0
 	while [ $SECTOR -lt 10000 ]; do
+		echo -n '.'
 		dd status=none if=/dev/urandom bs=512 count=1 seek=$(($RANDOM*$RANDOM%204800)) conv=notrunc of="$TMP/02.bin"
 		diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
 		local RESULT=$?
