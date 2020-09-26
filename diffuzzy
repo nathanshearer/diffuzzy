@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.1.3.0"
+VERSION="2.1.4.0"
 
 # \brief Compare paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -274,6 +274,20 @@ function diffuzzy_compare_type
 		fi
 	done
 	return $STATUS
+}
+
+# \brief Verify an executable in $PATH
+# \param $1 The executable
+# \param $2 An optional hint to display if the executable is not found
+function diffuzzy_check_executable
+{
+	if ! type "$1" >/dev/null 2>/dev/null; then
+		echo "$CODENAME: \"$1\" is required for this script to work correctly." >&2
+		if [ "$2" != "" ]; then
+			echo "$2"
+		fi
+		return 1
+	fi
 }
 
 # \brief Output the help documentation then exit
@@ -642,6 +656,15 @@ if [ $# -lt 2 ]; then
 	echo "error: a minimum of two paths must be provided for comparison."
 	exit 1
 fi
+
+#------------------------------------------------------------------------------
+# prepare environment
+
+diffuzzy_check_executable diff "hint: on Gentoo this is provided by sys-apps/diffutils" || exit
+diffuzzy_check_executable find "hint: on Gentoo this is provided by sys-apps/findutils" || exit
+diffuzzy_check_executable sort "hint: on Gentoo this is provided by sys-apps/coreutils" || exit
+diffuzzy_check_executable stat "hint: on Gentoo this is provided by sys-apps/coreutils" || exit
+diffuzzy_check_executable uniq "hint: on Gentoo this is provided by sys-apps/coreutils" || exit
 
 #------------------------------------------------------------------------------
 # begin execution
