@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.1.4.0"
+VERSION="2.2.0.0"
 
 # \brief Compare paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -30,6 +30,11 @@ function diffuzzy_compare
 	fi
 
 	case $(stat -c %F "$1") in
+		"block special file")
+			if ! $COMPARE_BLOCKDATA; then
+				return 0
+			fi
+			;;
 		"directory")
 			diffuzzy_compare_directories "$@"
 			return $?
@@ -57,7 +62,7 @@ function diffuzzy_compare_data
 	local SIZE_MAX=0
 	local SIZE=0
 	for P in "$@"; do
-		SIZE=$(stat -c %s "$P")
+		SIZE=$(diffuzzy_sizeof "$P")
 		if [ $SIZE_MAX -lt $SIZE ]; then
 			SIZE_MAX=$SIZE
 		fi
@@ -138,10 +143,10 @@ function diffuzzy_compare_footer
 	local STATUS=0
 	local P1="$1"
 	shift
-	local P1_SIZE=$(stat -c %s "$P1")
+	local P1_SIZE=$(diffuzzy_sizeof "$P1")
 	local P1_DATA=$(set -o pipefail; dd status=none if="$P1" bs=1 count=512 skip=$(($P1_SIZE-512)) | base64 -w 0) || return
 	for P2 in "$@"; do
-		P2_SIZE=$(stat -c %s "$P2")
+		local P2_SIZE=$(diffuzzy_sizeof "$P2")
 		P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=1 count=512 skip=$(($P2_SIZE-512)) | base64 -w 0) || return
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
 			echo "The last 512 bytes differ between '$P1' and '$P2'."
@@ -158,9 +163,10 @@ function diffuzzy_compare_full
 	local STATUS=0
 	local P1="$1"
 	shift
+	local P1_DATA=$(set -o pipefail; dd status=none if="$P1" bs=1 | base64 -w 0) || return
 	for P2 in "$@"; do
-		diff -q "$P1" "$P2" >/dev/null
-		if [ $? -ne 0 ]; then
+		P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=1 | base64 -w 0) || return
+		if [ "$P1_DATA" != "$P2_DATA" ]; then
 			echo "File data differs between '$P1' and '$P2'."
 			STATUS=1
 		fi
@@ -212,7 +218,7 @@ function diffuzzy_compare_offsets
 
 	local P1="$1"
 	shift
-	local P1_SIZE=$(stat -c %s "$P1")
+	local P1_SIZE=$(diffuzzy_sizeof "$P1")
 	local ITERATOR=1
 	local SECTORS=$(($P1_SIZE/512))
 	local OFFSETS=()
@@ -244,10 +250,10 @@ function diffuzzy_compare_size
 	if [ $# -ne 0 ]; then
 		local P1="$1"
 		shift
-		local P1_SIZE=$(stat -c %s "$P1")
+		P1_SIZE=$(diffuzzy_sizeof "$P1") || return
 	fi
 	for P2 in "$@"; do
-		P2_SIZE=$(stat -c %s "$P2")
+		P2_SIZE=$(diffuzzy_sizeof "$P2") || return
 		if [ "$P1_SIZE" != "$P2_SIZE" ]; then
 			echo "File size mismatch between '$P1' and '$P2'."
 			STATUS=1
@@ -318,7 +324,7 @@ function diffuzzy_help
 	#echo "      offsets=log2  default  Compare floor(log(2,size)) random 512 byte offsets"
 	#echo "      offsets=sqrt  default  Compare floor(sqrt(size)) random 512 byte offsets"
 	#echo "      offsets=n     default  Compare n random 512 byte offsets"
-	#echo "      blockdata     default  Compare block device data"
+	echo "      blockdata              Compare block device data"
 	echo "  --unittest"
 	echo "    Perform unit tests to verify functionality of this script."
 	echo "  -v"
@@ -333,6 +339,18 @@ function diffuzzy_help
 	echo "  $NAME $VERSION"
 	echo "  $COPYRIGHT"
 	echo "  Licensed under $LICENSE"
+}
+
+function diffuzzy_sizeof
+{
+	local TYPE=$(stat -c %F "$1")
+	local SIZE=0
+	if $COMPARE_BLOCKDATA && [ "$TYPE" = "block special file" ]; then
+		SIZE=$(blockdev --getsize64 "$1") || return
+	else
+		SIZE=$(stat -c %s "$1") || return
+	fi
+	printf %s "$SIZE"
 }
 
 # \brief Perform unit tests to verify functionality of this script
@@ -583,6 +601,7 @@ COMPARE_DATA=true
 COMPARE_HEADER=true
 COMPARE_FOOTER=true
 COMPARE_OFFSETS=true
+COMPARE_BLOCKDATA=false
 VERBOSE=0
 
 #------------------------------------------------------------------------------
@@ -625,6 +644,7 @@ while [ $# -ne 0 ]; do
 			COMPARE_HEADER=false
 			COMPARE_FOOTER=false
 			COMPARE_OFFSETS=false
+			COMPARE_BLOCKDATA=false
 			for M in $(echo -n "$2" | tr ',' ' '); do
 				case "$M" in
 					"existential") COMPARE_EXISTENTIAL=true ;;
@@ -644,6 +664,7 @@ while [ $# -ne 0 ]; do
 						COMPARE_DATA=true
 						COMPARE_OFFSETS=true
 						;;
+					"blockdata") COMPARE_BLOCKDATA=true ;;
 				esac
 			done
 			shift 2
@@ -660,7 +681,9 @@ fi
 #------------------------------------------------------------------------------
 # prepare environment
 
-diffuzzy_check_executable diff "hint: on Gentoo this is provided by sys-apps/diffutils" || exit
+if $COMPARE_BLOCKDATA; then
+	diffuzzy_check_executable blockdev "hint: on Gentoo this is provided by sys-apps/util-linux" || exit
+fi
 diffuzzy_check_executable find "hint: on Gentoo this is provided by sys-apps/findutils" || exit
 diffuzzy_check_executable sort "hint: on Gentoo this is provided by sys-apps/coreutils" || exit
 diffuzzy_check_executable stat "hint: on Gentoo this is provided by sys-apps/coreutils" || exit

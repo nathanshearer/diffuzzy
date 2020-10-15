@@ -17,6 +17,7 @@ Options:
       header        default  Compare the first 512 bytes
       footer        default  Compare the last 512 bytes
       offsets       default  Compare floor(log(2,size)) random 512 byte offsets
+      blockdata              Compare block device data
   --unittest
     Perform unit tests to verify functionality of this script.
   -v
@@ -28,6 +29,6 @@ Details:
   and floor(log(2,size)) random 512 byte offsets are compared.
 
 Version:
-  diffuzzy 2.1.4.0
+  diffuzzy 2.2.0.0
   Copyright (C) 2018 Nathan Shearer
   Licensed under GNU General Public License 2.0
