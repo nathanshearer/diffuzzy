@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.2.0.0"
+VERSION="2.3.0.0"
 
 # \brief Compare paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -148,6 +148,9 @@ function diffuzzy_compare_footer
 	for P2 in "$@"; do
 		local P2_SIZE=$(diffuzzy_sizeof "$P2")
 		P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=1 count=512 skip=$(($P2_SIZE-512)) | base64 -w 0) || return
+		if [ $VERBOSE -ge 2 ]; then
+			printf '%s\n' "  Comparing '$P1' and '$P2' footer at offset $(($P2_SIZE-512))"
+		fi
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
 			echo "The last 512 bytes differ between '$P1' and '$P2'."
 			STATUS=1
@@ -184,6 +187,9 @@ function diffuzzy_compare_header
 	local P1_DATA=$(set -o pipefail; dd status=none if="$P1" bs=1 count=512 | base64 -w 0) || return
 	for P2 in "$@"; do
 		P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=1 count=512 | base64 -w 0) || return
+		if [ $VERBOSE -ge 2 ]; then
+			printf '%s\n' "  Comparing '$P1' and '$P2' header at offset 0"
+		fi
 		if [ "$P1_DATA" != "$P2_DATA" ]; then
 			echo "The first 512 bytes differ between '$P1' and '$P2'."
 			STATUS=1
@@ -219,20 +225,16 @@ function diffuzzy_compare_offsets
 	local P1="$1"
 	shift
 	local P1_SIZE=$(diffuzzy_sizeof "$P1")
-	local ITERATOR=1
-	local SECTORS=$(($P1_SIZE/512))
-	local OFFSETS=()
-	while [ $ITERATOR -lt $P1_SIZE ]; do
-		OFFSETS+=( $(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS )) )
-		ITERATOR=$(($ITERATOR*2))
-	done
-
+	local OFFSETS=$(diffuzzy_compute_offsets $P1_SIZE "$OFFSETS")
 	for P2 in "$@"; do
-		for OFFSET in $(echo ${OFFSETS[@]} | tr ' ' '\n' | sort -n | uniq); do
+		for OFFSET in $OFFSETS; do
 			P1_DATA=$(set -o pipefail; dd status=none if="$P1" bs=512 count=1 skip=$OFFSET | base64 -w 0) || return
 			P2_DATA=$(set -o pipefail; dd status=none if="$P2" bs=512 count=1 skip=$OFFSET | base64 -w 0) || return
+			if [ $VERBOSE -ge 2 ]; then
+				printf '%s\n' "  Comparing '$P1' and '$P2' at offset $OFFSET"
+			fi
 			if [ "$P1_DATA" != "$P2_DATA" ]; then
-				echo "File data differs between '$P1' and '$P2'."
+				echo "File data differs between '$P1' and '$P2' at offset $OFFSET."
 				STATUS=1
 				break
 			fi
@@ -282,6 +284,54 @@ function diffuzzy_compare_type
 	return $STATUS
 }
 
+# \brief Compute a sorted list of offsets
+# \param $1 The size of the object
+# \param $2 The various offsets to compute
+function diffuzzy_compute_offsets
+{
+	local SIZE="$1"
+	local SECTORS=$(($SIZE/512))
+	local OFFSETS_COMPUTED=()
+	for OFFSET in $(printf %s "$2" | tr ',' ' '); do
+		case "$OFFSET" in
+			"log2")
+				local ITERATOR=1
+				while [ $ITERATOR -lt $SECTORS ]; do
+					OFFSETS_COMPUTED+=( $ITERATOR )
+					ITERATOR=$(($ITERATOR*2))
+				done
+				;;
+			"log2log")
+				local ITERATOR=1
+				while [ $ITERATOR -lt $SECTORS ]; do
+					OFFSETS_COMPUTED+=( $ITERATOR )
+					OFFSETS_COMPUTED+=( $(($SECTORS-1-$ITERATOR)) )
+					ITERATOR=$(($ITERATOR*2))
+				done
+				;;
+			"rlog2")
+				local ITERATOR=1
+				while [ $ITERATOR -lt $SIZE ]; do
+					OFFSETS_COMPUTED+=( $(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS )) )
+					ITERATOR=$(($ITERATOR*2))
+				done
+				;;
+			*)
+				if ! printf "$OFFSET" | grep -E -q "[0-9]+"; then
+					echo "error: unsupported offset \"$OFFSET\"."
+					return 1
+				fi
+				local ITERATOR=1
+				while [ $ITERATOR -le $OFFSET ]; do
+					OFFSETS_COMPUTED+=( $(( ($RANDOM*$RANDOM*$RANDOM)%$SECTORS )) )
+					ITERATOR=$(($ITERATOR+1))
+				done
+				;;
+		esac
+	done
+	echo ${OFFSETS_COMPUTED[@]} | tr ' ' '\n' | sort -n | uniq
+}
+
 # \brief Verify an executable in $PATH
 # \param $1 The executable
 # \param $2 An optional hint to display if the executable is not found
@@ -301,7 +351,7 @@ function diffuzzy_help
 {
 	#     01234567890123456789012345678901234567890123456789012345678901234567890123456789
 	echo "Description:"
-	echo "  Compare multiple paths recursively with a probabilistic algorithm"
+	echo "  Compare multiple paths recursively with adjustable accuracy"
 	echo
 	echo "Usage:"
 	echo "  $CODENAME [OPTION]... PATH1 PATH2 [PATH3]..."
@@ -311,29 +361,40 @@ function diffuzzy_help
 	echo "    Output this help message and exit."
 	echo "  -m,--method method1,method2,..."
 	echo "    A comma-separated list of which comparisons to run:"
-	echo "      existential   default  Detect missing objects"
-	echo "      mode                   Compare file mode bits"
-	echo "      type          default  Compare file types"
-	#echo "      symlink       default  Compare symlink target paths"
-	#echo "      device        default  Compare major and minor device type"
-	echo "      size          default  Compare file size"
-	echo "      data          default  Compare file data"
-	echo "      header        default  Compare the first 512 bytes"
-	echo "      footer        default  Compare the last 512 bytes"
-	echo "      offsets       default  Compare floor(log(2,size)) random 512 byte offsets"
-	#echo "      offsets=log2  default  Compare floor(log(2,size)) random 512 byte offsets"
-	#echo "      offsets=sqrt  default  Compare floor(sqrt(size)) random 512 byte offsets"
-	#echo "      offsets=n     default  Compare n random 512 byte offsets"
-	echo "      blockdata              Compare block device data"
+	echo "      existential  default  Detect missing objects"
+	echo "      mode                  Compare file mode bits"
+	echo "      type         default  Compare file types"
+	#echo "      symlink      default  Compare symlink target paths"
+	#echo "      device       default  Compare major and minor device type"
+	echo "      size         default  Compare file size"
+	echo "      data         default  Compare header, footer, and offsets"
+	echo "      header       default  Compare the first 512 bytes"
+	echo "      footer       default  Compare the last 512 bytes"
+	echo "      offsets      default  Compare a set of 512 byte offsets"
+	echo "      blockdata             Compare block device data"
+	echo "  --offsets rlog2"
+	echo "    A comma-spearated list of 512 byte offsets to compare:"
+	echo "      rlog2    A set of floor(log(2,size)) random 512 byte offsets. Default."
+	echo "      log2     1,2,4,8,... up to floor(log(2,size))"
+	echo "      log2log  1,2,4,8,...,last-1,last-2,last-4,last-8..."
+	echo "      n        Specify how many random 512 byte offests."
 	echo "  --unittest"
 	echo "    Perform unit tests to verify functionality of this script."
 	echo "  -v"
 	echo "    Output each set of files that are compared."
-	echo 
-	echo "Details:"
-	echo "  The data comparison method will compare all bits if the files are 4096 bytes"
-	echo "  or smaller. If the files are larger than 4096 bytes, then the header, footer,"
-	echo "  and floor(log(2,size)) random 512 byte offsets are compared."
+	echo "  --verbose #"
+	echo "    Use more or less verbose output. Valid values are:"
+	echo "      0  Default. No output."
+	echo "      1  Show compared files."
+	echo "      2  Show detailed comparison information."
+	echo
+	echo "Examples:"
+	echo "  Compare three different paths"
+	echo "    $CODENAME /mnt/storage /mnt/backup_local /mnt/backup_offsite"
+	echo "  Compare two paths with additinal offsets for higher accuracy"
+	echo "    $CODENAME --offsets log2log,rlog2 /mnt/storage /mnt/backup_local"
+	echo "  Compare only one random offset to minimize load"
+	echo "    $CODENAME --offsets 1 /mnt/storage /mnt/backup_offsite"
 	echo
 	echo "Version:"
 	echo "  $NAME $VERSION"
@@ -602,6 +663,7 @@ COMPARE_HEADER=true
 COMPARE_FOOTER=true
 COMPARE_OFFSETS=true
 COMPARE_BLOCKDATA=false
+OFFSETS=rlog2
 VERBOSE=0
 
 #------------------------------------------------------------------------------
@@ -631,10 +693,6 @@ if [ $# -eq 1 ]; then
 fi
 while [ $# -ne 0 ]; do
 	case "$1" in
-		"-v")
-			VERBOSE=1
-			shift
-			;;
 		"-m"|"--method")
 			COMPARE_EXISTENTIAL=false
 			COMPARE_MODE=false
@@ -669,6 +727,18 @@ while [ $# -ne 0 ]; do
 			done
 			shift 2
 			;;
+		"--offsets")
+			OFFSETS="$2"
+			shift 2
+			;;
+		"-v")
+			VERBOSE=$(($VERBOSE+1))
+			shift
+			;;
+		"--verbose")
+			VERBOSE="$2"
+			shift 2
+			;;
 		*)
 			break;;
 	esac
@@ -681,6 +751,7 @@ fi
 #------------------------------------------------------------------------------
 # prepare environment
 
+diffuzzy_check_executable base64 "hint: on Gentoo this is provided by sys-apps/coreutils" || exit
 if $COMPARE_BLOCKDATA; then
 	diffuzzy_check_executable blockdev "hint: on Gentoo this is provided by sys-apps/util-linux" || exit
 fi
