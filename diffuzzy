@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.3.0.0"
+VERSION="2.3.1.0"
 
 # \brief Compare paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -351,7 +351,7 @@ function diffuzzy_help
 {
 	#     01234567890123456789012345678901234567890123456789012345678901234567890123456789
 	echo "Description:"
-	echo "  Compare multiple paths recursively with adjustable accuracy"
+	echo "  Compare objects with adjustable accuracy and speed"
 	echo
 	echo "Usage:"
 	echo "  $CODENAME [OPTION]... PATH1 PATH2 [PATH3]..."
@@ -361,17 +361,17 @@ function diffuzzy_help
 	echo "    Output this help message and exit."
 	echo "  -m,--method method1,method2,..."
 	echo "    A comma-separated list of which comparisons to run:"
-	echo "      existential  default  Detect missing objects"
-	echo "      mode                  Compare file mode bits"
-	echo "      type         default  Compare file types"
-	#echo "      symlink      default  Compare symlink target paths"
-	#echo "      device       default  Compare major and minor device type"
-	echo "      size         default  Compare file size"
-	echo "      data         default  Compare header, footer, and offsets"
-	echo "      header       default  Compare the first 512 bytes"
-	echo "      footer       default  Compare the last 512 bytes"
-	echo "      offsets      default  Compare a set of 512 byte offsets"
-	echo "      blockdata             Compare block device data"
+	echo "      e,existential  default  Detect missing objects"
+	echo "      m,mode                  Compare file mode bits"
+	echo "      t,type         default  Compare file types"
+	#echo "        symlink      default  Compare symlink target paths"
+	#echo "        device       default  Compare major and minor device type"
+	echo "      s,size         default  Compare file size"
+	echo "      d,data         default  Compare header, footer, and offsets"
+	echo "      h,header       default  Compare the first 512 bytes"
+	echo "      f,footer       default  Compare the last 512 bytes"
+	echo "      o,offsets      default  Compare a set of 512 byte offsets"
+	echo "      b,blockdata             Compare block device data"
 	echo "  --offsets rlog2"
 	echo "    A comma-spearated list of 512 byte offsets to compare:"
 	echo "      rlog2    A set of floor(log(2,size)) random 512 byte offsets. Default."
@@ -389,12 +389,16 @@ function diffuzzy_help
 	echo "      2  Show detailed comparison information."
 	echo
 	echo "Examples:"
-	echo "  Compare three different paths"
+	echo "  Compare three different paths recursively with fast random offsets"
 	echo "    $CODENAME /mnt/storage /mnt/backup_local /mnt/backup_offsite"
 	echo "  Compare two paths with additinal offsets for higher accuracy"
 	echo "    $CODENAME --offsets log2log,rlog2 /mnt/storage /mnt/backup_local"
 	echo "  Compare only one random offset to minimize load"
 	echo "    $CODENAME --offsets 1 /mnt/storage /mnt/backup_offsite"
+	echo "  Verify objects exist with matching size"
+	echo "    $CODENAME -m e,s /mnt/storage /mnt/backup_offsite"
+	echo "  Verify objects exist with matching mode bits"
+	echo "    $CODENAME -m e,m /var/public /mnt/remote-public"
 	echo
 	echo "Version:"
 	echo "  $NAME $VERSION"
@@ -705,24 +709,29 @@ while [ $# -ne 0 ]; do
 			COMPARE_BLOCKDATA=false
 			for M in $(echo -n "$2" | tr ',' ' '); do
 				case "$M" in
-					"existential") COMPARE_EXISTENTIAL=true ;;
-					"mode") COMPARE_MODE=true ;;
-					"type") COMPARE_TYPE=true ;;
-					"size") COMPARE_SIZE=true ;;
-					"data") COMPARE_DATA=true ;;
-					"header")
+					'e'|'existential') COMPARE_EXISTENTIAL=true ;;
+					'm'|'mode') COMPARE_MODE=true ;;
+					't'|'type') COMPARE_TYPE=true ;;
+					's'|'size') COMPARE_SIZE=true ;;
+					'd'|'data')
+						COMPARE_DATA=true
+						COMPARE_HEADER=true
+						COMPARE_FOOTER=true
+						COMPARE_OFFSETS=true
+						;;
+					'h'|'header')
 						COMPARE_DATA=true
 						COMPARE_HEADER=true
 						;;
-					"footer")
+					'f'|'footer')
 						COMPARE_DATA=true
 						COMPARE_FOOTER=true
 						;;
-					"offsets")
+					'o'|'offsets')
 						COMPARE_DATA=true
 						COMPARE_OFFSETS=true
 						;;
-					"blockdata") COMPARE_BLOCKDATA=true ;;
+					'b'|'blockdata') COMPARE_BLOCKDATA=true ;;
 				esac
 			done
 			shift 2
