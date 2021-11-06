@@ -10,6 +10,8 @@ Options:
   -m,--method method1,method2,...
     A comma-separated list of which comparisons to run:
       e,existential  default  Detect missing objects
+      u,uid                   Compare user ID number
+      g,gid                   Compare group ID number
       m,mode                  Compare file mode bits
       t,type         default  Compare file types
       s,size         default  Compare file size
@@ -49,6 +51,6 @@ Examples:
     diffuzzy -m e,m /var/public /mnt/remote-public
 
 Version:
-  diffuzzy 2.4.0.0
+  diffuzzy 2.5.0.0
   Copyright (C) 2018 Nathan Shearer
   Licensed under GNU General Public License 2.0

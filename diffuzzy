@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.4.0.0"
+VERSION="2.5.0.0"
 
 # \brief Compare paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -22,6 +22,14 @@ function diffuzzy_compare
 	else
 		# short circuit and return 0 if a path does not exist
 		diffuzzy_compare_existential "$@" || return 0
+	fi
+
+	if $COMPARE_UID; then
+		diffuzzy_compare_uid "$@" || return
+	fi
+
+	if $COMPARE_GID; then
+		diffuzzy_compare_gid "$@" || return
 	fi
 
 	if $COMPARE_MODE; then
@@ -182,6 +190,24 @@ function diffuzzy_compare_full
 	return $STATUS
 }
 
+# \brief Compare group ID number
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_gid
+{
+	local STATUS=0
+	local P1="$1"
+	shift
+	local P1_GID=$(stat -c '%g' "$P1")
+	for P2 in "$@"; do
+		P2_GID=$(stat -c '%g' "$P2")
+		if [ "$P1_GID" != "$P2_GID" ]; then
+			echo "Group ID mismatch between '$P1' ($P1_GID) and '$P2' ($P2_GID)."
+			STATUS=1
+		fi
+	done
+	return $STATUS
+}
+
 # \brief Compare the first 512 bytes
 # \param "$@" The list of paths to compare
 function diffuzzy_compare_header
@@ -289,6 +315,24 @@ function diffuzzy_compare_type
 	return $STATUS
 }
 
+# \brief Compare user ID number
+# \param "$@" The list of paths to compare
+function diffuzzy_compare_uid
+{
+	local STATUS=0
+	local P1="$1"
+	shift
+	local P1_UID=$(stat -c '%u' "$P1")
+	for P2 in "$@"; do
+		P2_UID=$(stat -c '%u' "$P2")
+		if [ "$P1_UID" != "$P2_UID" ]; then
+			echo "User ID mismatch between '$P1' ($P1_UID) and '$P2' ($P2_UID)."
+			STATUS=1
+		fi
+	done
+	return $STATUS
+}
+
 # \brief Compute a sorted list of offsets
 # \param $1 The size of the object
 # \param $2 The various offsets to compute
@@ -367,6 +411,8 @@ function diffuzzy_help
 	echo "  -m,--method method1,method2,..."
 	echo "    A comma-separated list of which comparisons to run:"
 	echo "      e,existential  default  Detect missing objects"
+	echo "      u,uid                   Compare user ID number"
+	echo "      g,gid                   Compare group ID number"
 	echo "      m,mode                  Compare file mode bits"
 	echo "      t,type         default  Compare file types"
 	#echo "        symlink      default  Compare symlink target paths"
@@ -453,6 +499,80 @@ function diffuzzy_unittest
 	touch "$TMP/01.bin" "$TMP/02.bin"
 	COMPARE_EXISTENTIAL=false diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
 	if [ $? -ne 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
+
+	echo "Compare two files with different user ID numbers..."
+	touch "$TMP/01.bin" "$TMP/02.bin"
+	UID_01=$(stat -c %u "$TMP/01.bin")
+	if [ "$UID_01" = '0' ]; then
+		chown 65534 "$TMP/02.bin"
+		COMPARE_EXISTENTIAL=true \
+		COMPARE_UID=true \
+		COMPARE_GID=false \
+		COMPARE_MODE=false \
+		COMPARE_TYPE=false \
+		COMPARE_SIZE=false \
+		COMPARE_DATA=false \
+		COMPARE_HEADER=false \
+		COMPARE_FOOTER=false \
+		COMPARE_OFFSETS=false \
+		COMPARE_BLOCKDATA=false \
+		diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+	else
+		COMPARE_EXISTENTIAL=true \
+		COMPARE_UID=true \
+		COMPARE_GID=false \
+		COMPARE_MODE=false \
+		COMPARE_TYPE=false \
+		COMPARE_SIZE=false \
+		COMPARE_DATA=false \
+		COMPARE_HEADER=false \
+		COMPARE_FOOTER=false \
+		COMPARE_OFFSETS=false \
+		COMPARE_BLOCKDATA=false \
+		diffuzzy_compare "$TMP/01.bin" "/proc/cpuinfo"
+	fi
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
+
+	echo "Compare two files with different group ID numbers..."
+	touch "$TMP/01.bin" "$TMP/02.bin"
+	GID_01=$(stat -c %g "$TMP/01.bin")
+	if [ "$GID_01" = '0' ]; then
+		chown :65534 "$TMP/02.bin"
+		COMPARE_EXISTENTIAL=true \
+		COMPARE_UID=false \
+		COMPARE_GID=true \
+		COMPARE_MODE=false \
+		COMPARE_TYPE=false \
+		COMPARE_SIZE=false \
+		COMPARE_DATA=false \
+		COMPARE_HEADER=false \
+		COMPARE_FOOTER=false \
+		COMPARE_OFFSETS=false \
+		COMPARE_BLOCKDATA=false \
+		diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin"
+	else
+		COMPARE_EXISTENTIAL=true \
+		COMPARE_UID=false \
+		COMPARE_GID=true \
+		COMPARE_MODE=false \
+		COMPARE_TYPE=false \
+		COMPARE_SIZE=false \
+		COMPARE_DATA=false \
+		COMPARE_HEADER=false \
+		COMPARE_FOOTER=false \
+		COMPARE_OFFSETS=false \
+		COMPARE_BLOCKDATA=false \
+		diffuzzy_compare "$TMP/01.bin" "/proc/cpuinfo"
+	fi
+	if [ $? -eq 0 ]; then
 		echo "error: test failed."
 		return 1
 	fi
@@ -684,6 +804,8 @@ function diffuzzy_unittest
 # default configuration
 
 COMPARE_EXISTENTIAL=true
+COMPARE_UID=false
+COMPARE_GID=false
 COMPARE_MODE=false
 COMPARE_TYPE=true
 COMPARE_SIZE=true
@@ -724,6 +846,8 @@ while [ $# -ne 0 ]; do
 	case "$1" in
 		"-m"|"--method")
 			COMPARE_EXISTENTIAL=false
+			COMPARE_UID=false
+			COMPARE_GID=false
 			COMPARE_MODE=false
 			COMPARE_TYPE=false
 			COMPARE_SIZE=false
@@ -735,6 +859,8 @@ while [ $# -ne 0 ]; do
 			for M in $(echo -n "$2" | tr ',' ' '); do
 				case "$M" in
 					'e'|'existential') COMPARE_EXISTENTIAL=true ;;
+					'u'|'uid') COMPARE_UID=true ;;
+					'g'|'gid') COMPARE_GID=true ;;
 					'm'|'mode') COMPARE_MODE=true ;;
 					't'|'type') COMPARE_TYPE=true ;;
 					's'|'size') COMPARE_SIZE=true ;;
