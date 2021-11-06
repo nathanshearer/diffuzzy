@@ -41,12 +41,14 @@ Examples:
     diffuzzy --offsets log2log,rlog2 /mnt/storage /mnt/backup_local
   Compare only one random offset to minimize load
     diffuzzy --offsets 1 /mnt/storage /mnt/backup_offsite
-  Verify objects exist with matching size
+  Verify objects exist and with matching size
     diffuzzy -m e,s /mnt/storage /mnt/backup_offsite
-  Verify objects exist with matching mode bits
+  Verify existing objects have matching size and ignore missing objects
+    diffuzzy -m s /mnt/storage /mnt/backup_offsite
+  Verify objects exist and with matching mode bits
     diffuzzy -m e,m /var/public /mnt/remote-public
 
 Version:
-  diffuzzy 2.3.1.0
+  diffuzzy 2.4.0.0
   Copyright (C) 2018 Nathan Shearer
   Licensed under GNU General Public License 2.0

@@ -4,7 +4,7 @@ NAME="diffuzzy"
 CODENAME="diffuzzy"
 COPYRIGHT="Copyright (C) 2018 Nathan Shearer"
 LICENSE="GNU General Public License 2.0"
-VERSION="2.3.1.0"
+VERSION="2.4.0.0"
 
 # \brief Compare paths recursively with a probabilistic diff
 # \param "$@" The list of paths to compare
@@ -19,6 +19,9 @@ function diffuzzy_compare
 
 	if $COMPARE_EXISTENTIAL; then
 		diffuzzy_compare_existential "$@" || return
+	else
+		# short circuit and return 0 if a path does not exist
+		diffuzzy_compare_existential "$@" || return 0
 	fi
 
 	if $COMPARE_MODE; then
@@ -129,7 +132,9 @@ function diffuzzy_compare_existential
 			if [ -L "$P" ]; then
 				continue
 			fi
-			echo "Path '$P' does not exist."
+			if $COMPARE_EXISTENTIAL; then
+				echo "Path '$P' does not exist."
+			fi
 			STATUS=1
 		fi
 	done
@@ -395,9 +400,11 @@ function diffuzzy_help
 	echo "    $CODENAME --offsets log2log,rlog2 /mnt/storage /mnt/backup_local"
 	echo "  Compare only one random offset to minimize load"
 	echo "    $CODENAME --offsets 1 /mnt/storage /mnt/backup_offsite"
-	echo "  Verify objects exist with matching size"
+	echo "  Verify objects exist and with matching size"
 	echo "    $CODENAME -m e,s /mnt/storage /mnt/backup_offsite"
-	echo "  Verify objects exist with matching mode bits"
+	echo "  Verify existing objects have matching size and ignore missing objects"
+	echo "    $CODENAME -m s /mnt/storage /mnt/backup_offsite"
+	echo "  Verify objects exist and with matching mode bits"
 	echo "    $CODENAME -m e,m /var/public /mnt/remote-public"
 	echo
 	echo "Version:"
@@ -432,6 +439,24 @@ function diffuzzy_unittest
 		return 1
 	fi
 	rm -f "$TMP/01.bin"
+	
+	echo "Compare three paths and detect one that is missing..."
+	touch "$TMP/01.bin" "$TMP/02.bin"
+	diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -eq 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
+	
+	echo "Compare three paths and ignore one that is missing..."
+	touch "$TMP/01.bin" "$TMP/02.bin"
+	COMPARE_EXISTENTIAL=false diffuzzy_compare "$TMP/01.bin" "$TMP/02.bin" "$TMP/03.bin"
+	if [ $? -ne 0 ]; then
+		echo "error: test failed."
+		return 1
+	fi
+	rm -f "$TMP/01.bin" "$TMP/02.bin"
 
 	echo "Compare two files with different mode bits..."
 	touch "$TMP/01.bin"
